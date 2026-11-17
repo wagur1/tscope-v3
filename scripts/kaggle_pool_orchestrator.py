@@ -105,8 +105,6 @@ def get_authenticated_api(username: str, token: str):
 
 
 def _kernel_slug_for_mode(run_mode: str, shard_id: int) -> str:
-    if run_mode in ("train", "eval_soup", "eval_poc", "both"):
-        return f"t-scope-v3-shard-{shard_id:02d}"
     mode_tag = run_mode.replace("_", "-")
     return f"t-scope-v3-{mode_tag}-{shard_id:02d}"
 
@@ -343,11 +341,12 @@ if RUN_MODE == "eval_soup":
 
 if RUN_MODE == "eval_sota_and_tracking":
     soup_dir = _resolve_soup_dir()
+    task_tokens = [t for t in SOTA_TASKS.replace(",", " ").split() if t] or ["all"]
     cmd_sota = [
         sys.executable,
         str(repo_dir / "scripts" / "eval_sota_and_tracking.py"),
         "--data_root", str(mot17_root) if mot17_root is not None else "auto",
-        "--second_data_root", str(second_root) if second_root is not None else "auto",
+        "--second_data_root", "auto",
         "--soup_dir", str(soup_dir),
         "--output_dir", "/kaggle/working",
         "--img_h", str(IMG_H),
@@ -355,7 +354,7 @@ if RUN_MODE == "eval_sota_and_tracking":
         "--gop_len", str(GOP_LEN),
         "--bframes", str(BFRAMES),
         "--auto_download_scope",
-        "--tasks", SOTA_TASKS,
+        "--tasks", *task_tokens,
         "--shard_id", str(SHARD_ID),
         "--num_shards", str(NUM_SHARDS),
     ]
@@ -631,17 +630,19 @@ def push_all_shards(args: argparse.Namespace, accounts: List[Tuple[str, str]]) -
                 )
 
                 res = api.kernels_push(str(tmp_path))
+                pushed_ref = str(getattr(res, "ref", "") or "").strip()
+                actual_slug = pushed_ref.split("/")[-1] if "/" in pushed_ref else slug
                 err_msg = _redact_secrets(getattr(res, "error", "") or "", (user, token))
                 print(
                     f"  [Shard {logical_shard_id:02d}/{num_shards:02d} -> Account {acc_idx:02d}] "
-                    f"Pushed ({rem_h:5.2f}h rem) | slug={slug} | variant={variant:<18} "
+                    f"Pushed ({rem_h:5.2f}h rem) | slug={actual_slug} | variant={variant:<18} "
                     f"(slice {data_shard_id + 1}/{data_num_shards}) {err_msg}"
                 )
                 dispatch_records.append(
                     {
                         "shard_id": logical_shard_id,
                         "account_index": acc_idx,
-                        "kernel_slug": slug,
+                        "kernel_slug": actual_slug,
                         "variant": variant,
                         "data_shard_id": data_shard_id,
                         "data_num_shards": data_num_shards,

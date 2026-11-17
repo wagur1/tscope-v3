@@ -1399,6 +1399,101 @@ def run_sota_and_tracking_on_mot17(
     return sota_report, tracking_report
 
 
+def _infer_secondary_dataset_tag(root: Path) -> str:
+    """Infer canonical secondary dataset key ('mot20', 'kitti', 'sfu') from an explicit single-dataset path."""
+    lower = str(root).replace("\\", "/").lower()
+    if "mot20" in lower or "mot-20" in lower:
+        return "mot20"
+    if "kitti" in lower:
+        return "kitti"
+    if "hevc-b" in lower or "sfu" in lower:
+        return "sfu"
+    if (root / "label_02").is_dir() and (root / "image_02").is_dir():
+        return "kitti"
+    if root.is_dir() and any(root.glob("*.yuv")):
+        return "sfu"
+    for child in sorted(root.iterdir()) if root.is_dir() else ():
+        cname = child.name.upper()
+        if cname.startswith("MOT20-") and (child / "img1").is_dir():
+            return "mot20"
+    if root.is_dir():
+        has_mot20 = any(
+            gt_file.parent.parent.name.upper().startswith("MOT20-")
+            for gt_file in sorted(root.rglob("gt.txt"))
+        )
+        has_kitti = any(
+            lbl_dir.is_dir() and (lbl_dir.parent / "image_02").is_dir()
+            for lbl_dir in sorted(root.rglob("label_02"))
+        )
+        has_sfu = any(root.rglob("*.yuv"))
+        if int(has_mot20) + int(has_kitti) + int(has_sfu) == 1:
+            if has_mot20:
+                return "mot20"
+            if has_kitti:
+                return "kitti"
+            if has_sfu:
+                return "sfu"
+    return "custom_second_dataset"
+
+
+def _discover_secondary_dataset_candidates(second_data_root: str) -> List[Tuple[str, Path]]:
+    """
+    Resolves canonical secondary dataset `(tag, path)` pairs:
+      1. If an explicit `--second_data_root` is provided, maps it to its canonical tag
+         (`mot20` / `kitti` / `sfu` / multi-dataset parent, falling back to `custom_second_dataset`).
+      2. Always appends any additional mounted secondary datasets (`mot20`, `kitti`, `sfu`)
+         whose resolved path is not already queued so co-mounted MOT20 + KITTI both run!
+    """
+    candidates: List[Tuple[str, Path]] = []
+    seen_resolved = set()
+    seen_tags = set()
+
+    def _add(tag: str, p: Path) -> None:
+        rp = p.resolve()
+        if rp in seen_resolved or tag in seen_tags:
+            return
+        seen_resolved.add(rp)
+        seen_tags.add(tag)
+        candidates.append((tag, p))
+
+    sec_arg = (second_data_root or "").strip()
+    if sec_arg.lower() not in ("", "auto", "none") and Path(sec_arg).exists():
+        sec_path = Path(sec_arg)
+        inferred = _infer_secondary_dataset_tag(sec_path)
+        if inferred != "custom_second_dataset":
+            _add(inferred, sec_path)
+        else:
+            sub_found: Dict[str, Path] = {}
+            try:
+                from scripts.prepare_kaggle_datasets import _scan_kitti_root, _scan_mot_train_roots, _scan_yuv_root
+
+                mot_sub = _scan_mot_train_roots(sec_path)
+                if "mot20" in mot_sub:
+                    sub_found["mot20"] = mot_sub["mot20"]
+                kitti_sub = _scan_kitti_root(sec_path)
+                if kitti_sub is not None:
+                    sub_found["kitti"] = kitti_sub
+                sfu_sub = _scan_yuv_root(sec_path)
+                if sfu_sub is not None:
+                    sub_found["sfu"] = sfu_sub
+            except Exception:
+                sub_found = {}
+            added_sub = False
+            for sub_tag in ("mot20", "kitti", "sfu"):
+                if sub_tag in sub_found and sub_found[sub_tag].exists():
+                    _add(sub_tag, sub_found[sub_tag])
+                    added_sub = True
+            if not added_sub:
+                _add("custom_second_dataset", sec_path)
+
+    for ds_tag in ("mot20", "kitti", "sfu"):
+        found = _safe_find_mounted_dataset(ds_tag)
+        if found is not None and found.exists():
+            _add(ds_tag, found)
+
+    return candidates
+
+
 @torch.no_grad()
 def evaluate_secondary_vcm_datasets(
     args: argparse.Namespace,
@@ -1410,15 +1505,7 @@ def evaluate_secondary_vcm_datasets(
     """
     Evaluates T-SCOPE v3 zero-shot on secondary VCM datasets (`MOT20` crowded tracking & `KITTI` multi-class driving).
     """
-    candidates: List[Tuple[str, Path]] = []
-    sec_arg = (args.second_data_root or "").strip()
-    if sec_arg.lower() not in ("", "auto", "none") and Path(sec_arg).exists():
-        candidates.append(("custom_second_dataset", Path(sec_arg)))
-    else:
-        for ds_tag in ("mot20", "kitti", "sfu"):
-            found = _safe_find_mounted_dataset(ds_tag)
-            if found is not None and found.exists():
-                candidates.append((ds_tag, found))
+    candidates = _discover_secondary_dataset_candidates(args.second_data_root)
 
     if not candidates:
         return {"status": "skipped", "reason": "No secondary dataset mounted (mount mot-20 or kitti-tracking via --extra_dataset_slugs)"}
@@ -1442,6 +1529,8 @@ def evaluate_secondary_vcm_datasets(
         }
         if "img_h" in sig.parameters and "img_w" in sig.parameters:
             ds_kwargs["img_h"], ds_kwargs["img_w"] = img_hw
+        if "dataset_filter" in sig.parameters and ds_tag in ("mot20", "kitti", "sfu"):
+            ds_kwargs["dataset_filter"] = ds_tag
         if "label_root" in sig.parameters and args.sfu_label_root:
             ds_kwargs["label_root"] = args.sfu_label_root
 
