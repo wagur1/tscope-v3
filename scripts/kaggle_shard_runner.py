@@ -1,0 +1,1215 @@
+import argparse
+import copy
+import inspect
+import json
+import math
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from losses.vcm_temporal_loss import VCMTemporalPreEditLoss
+from models.frozen_detector_fpn import FrozenFPNDetectorTeacher
+from models.temporal_scope import TemporalSCOPE, gaussian_blur_5x5
+from scripts.experiment_protocol import (
+    CODEC_CONFIGURATION,
+    CRFS,
+    EVAL_GOP_LEN,
+    IMG_H,
+    IMG_W,
+    METRIC_POLICY,
+    PREPROCESSING,
+    SCHEMA_VERSION,
+    TRAIN_CLIP_LEN,
+    TRAIN_SEQUENCES,
+    VAL_SEQUENCES,
+    VARIANT_CONFIGS,
+    VARIANTS,
+    expected_mot17_test_frames,
+    sha256_file,
+    validate_soup_provenance,
+)
+from scripts.prepare_kaggle_datasets import find_mounted_kaggle_dataset
+from vcm_datasets.vcm_video_datasets import RealVCMVideoDataset
+from video_codecs.hybrid_x265_ste import HybridX265STE
+
+# Strictly de-confounded 5-variant ablation table (F07 & F15 fix).
+ABLATION_PRESETS: Dict[str, Dict[str, Any]] = copy.deepcopy(VARIANT_CONFIGS)
+
+
+def get_shard_slice(items: List[Any], shard_id: int, num_shards: int) -> List[Any]:
+    """Deterministically partitions a list across `num_shards` workers."""
+    if not (0 <= shard_id < num_shards):
+        raise ValueError(f"shard_id={shard_id} must be in [0, {num_shards - 1}]")
+    return [item for idx, item in enumerate(items) if idx % num_shards == shard_id]
+
+
+def resolve_hw(args: argparse.Namespace) -> Tuple[int, int]:
+    """Resolve (H, W) with aspect-preserving 384x640 (16:9) default and legacy int fallback."""
+    legacy_size = getattr(args, "img_size", None)
+    img_h = getattr(args, "img_h", None)
+    img_w = getattr(args, "img_w", None)
+    if img_h is not None and img_w is not None:
+        return int(img_h), int(img_w)
+    if legacy_size is not None and int(legacy_size) > 0:
+        return int(legacy_size), int(legacy_size)
+    return IMG_H, IMG_W
+
+
+def _safe_find_mounted_dataset(dataset_name: str = "mot17") -> Optional[Path]:
+    try:
+        sig = inspect.signature(find_mounted_kaggle_dataset)
+        if "dataset_name" in sig.parameters:
+            return find_mounted_kaggle_dataset(dataset_name=dataset_name)
+        return find_mounted_kaggle_dataset()
+    except Exception:
+        return None
+
+
+def _call_criterion(criterion: nn.Module, **kwargs: Any) -> Dict[str, torch.Tensor]:
+    sig = inspect.signature(criterion.forward)
+    if "eff_attn_map" not in sig.parameters:
+        kwargs.pop("eff_attn_map", None)
+    return criterion(**kwargs)
+
+
+def _call_codec_ste(
+    codec_ste: HybridX265STE,
+    video_edit: torch.Tensor,
+    severity: torch.Tensor,
+    ctu_qp_offsets: Optional[torch.Tensor],
+    family_id: Optional[torch.Tensor] = None,
+) -> Dict[str, torch.Tensor]:
+    sig = inspect.signature(codec_ste.forward)
+    if "family_id" in sig.parameters:
+        return codec_ste(video_edit, severity, ctu_qp_offsets, family_id=family_id)
+    return codec_ste(video_edit, severity, ctu_qp_offsets)
+
+
+def _call_evaluate_real_codec(
+    codec: HybridX265STE,
+    video_edit: torch.Tensor,
+    qp: int,
+    ctu_qp_offsets: Optional[torch.Tensor],
+    family_id: int = 0,
+    gop_len: Optional[int] = None,
+    bframes: int = 0,
+) -> Dict[str, Any]:
+    sig = inspect.signature(codec.evaluate_real_x265)
+    call_kwargs: Dict[str, Any] = {}
+    if "family_id" in sig.parameters:
+        call_kwargs["family_id"] = family_id
+    if "gop_len" in sig.parameters:
+        call_kwargs["gop_len"] = gop_len
+    if "bframes" in sig.parameters:
+        call_kwargs["bframes"] = bframes
+    return codec.evaluate_real_x265(video_edit, qp, ctu_qp_offsets, **call_kwargs)
+
+
+def _construct_real_dataset(
+    data_root: str,
+    shard_id: int,
+    num_shards: int,
+    clip_len: int,
+    stride: int,
+    img_hw: Tuple[int, int],
+    is_train: bool,
+    enforce_disjoint_split: bool,
+    split: Optional[str],
+) -> RealVCMVideoDataset:
+    sig = inspect.signature(RealVCMVideoDataset.__init__)
+    size_arg: Union[int, Tuple[int, int]] = (
+        img_hw if (img_hw[0] != img_hw[1] or "img_h" in sig.parameters) else img_hw[0]
+    )
+    kwargs: Dict[str, Any] = {
+        "data_root": data_root,
+        "shard_id": shard_id,
+        "num_shards": num_shards,
+        "clip_len": clip_len,
+        "stride": stride,
+        "img_size": size_arg,
+        "is_train": is_train,
+        "enforce_disjoint_split": enforce_disjoint_split,
+        "split": split,
+    }
+    if "img_h" in sig.parameters and "img_w" in sig.parameters:
+        kwargs["img_h"] = img_hw[0]
+        kwargs["img_w"] = img_hw[1]
+    return RealVCMVideoDataset(**kwargs)
+
+
+class ShardedVideoClipDataset(Dataset):
+    """Deterministic synthetic moving-object fallback dataset for smoke tests only."""
+
+    def __init__(
+        self,
+        data_root: str,
+        shard_id: int = 0,
+        num_shards: int = 20,
+        clip_len: int = 4,
+        img_size: Union[int, Tuple[int, int]] = (IMG_H, IMG_W),
+        total_virtual_clips: int = 400,
+    ) -> None:
+        super().__init__()
+        self.clip_len = clip_len
+        if isinstance(img_size, tuple):
+            self.img_h, self.img_w = int(img_size[0]), int(img_size[1])
+        else:
+            self.img_h = self.img_w = int(img_size)
+        self.root = Path(data_root) if data_root else None
+        all_indices = list(range(total_virtual_clips))
+        self.my_items = get_shard_slice(all_indices, shard_id, num_shards)
+
+    def __len__(self) -> int:
+        return len(self.my_items)
+
+    def _generate_synthetic_moving_clip(
+        self, seed_idx: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        g = torch.Generator()
+        g.manual_seed(10000 + seed_idx)
+        t, h, w = self.clip_len, self.img_h, self.img_w
+        bg_base = 0.25 + 0.25 * torch.rand((1, 3, h, w), generator=g)
+        sensor_noise = 0.03 * torch.randn((t, 3, h, w), generator=g)
+        video = torch.clamp(bg_base + sensor_noise, 0.0, 1.0)
+        m_attn = torch.zeros((t, 1, h, w), dtype=torch.float32)
+        m_det = torch.zeros((t, 1, h, w), dtype=torch.float32)
+        box_h, box_w = max(16, h // 4), max(16, w // 5)
+        start_y = int(torch.randint(8, max(9, h - box_h - 16), (1,), generator=g).item())
+        start_x = int(torch.randint(8, max(9, w - box_w - 16), (1,), generator=g).item())
+        vy = int(torch.randint(-3, 4, (1,), generator=g).item())
+        vx = int(torch.randint(2, 6, (1,), generator=g).item())
+        obj_texture = 0.6 + 0.35 * torch.rand((3, box_h, box_w), generator=g)
+        for step in range(t):
+            y0 = max(4, min(h - box_h - 4, start_y + step * vy))
+            x0 = max(4, min(w - box_w - 4, start_x + step * vx))
+            y1, x1 = y0 + box_h, x0 + box_w
+            video[step, :, y0:y1, x0:x1] = obj_texture
+            m_attn[step, 0, y0:y1, x0:x1] = 1.0
+            pad = 12
+            m_det[step, 0, max(0, y0 - pad) : min(h, y1 + pad), max(0, x0 - pad) : min(w, x1 + pad)] = 1.0
+        return video, m_attn, m_det
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        seed_id = int(self.my_items[idx])
+        video, m_attn, m_det = self._generate_synthetic_moving_clip(seed_id)
+        return {
+            "video": video,
+            "m_attn": m_attn,
+            "m_det": m_det,
+            "clip_id": torch.tensor(seed_id, dtype=torch.long),
+        }
+
+
+def build_sharded_dataset(
+    args: argparse.Namespace,
+    is_train: bool = True,
+    default_virtual_mult: int = 20,
+    split: Optional[str] = None,
+    shard_id: Optional[int] = None,
+    num_shards: Optional[int] = None,
+    clip_len_override: Optional[int] = None,
+) -> Dataset:
+    data_root = (getattr(args, "data_root", "") or "").strip()
+    if data_root.lower() in ("", "auto", "none"):
+        data_root = ""
+        mounted = _safe_find_mounted_dataset("mot17")
+        if mounted is not None:
+            data_root = str(mounted)
+        elif Path("./data/MOT17_sample").exists():
+            data_root = "./data/MOT17_sample"
+
+    sid = args.shard_id if shard_id is None else shard_id
+    nsh = args.num_shards if num_shards is None else num_shards
+    img_hw = resolve_hw(args)
+    eff_split = split if split is not None else ("train" if is_train else "test")
+
+    if clip_len_override is not None:
+        clip_len = int(clip_len_override)
+    elif is_train or eff_split == "val":
+        clip_len = int(getattr(args, "clip_len", TRAIN_CLIP_LEN))
+    else:
+        gop_arg = getattr(args, "gop_len", None)
+        clip_len = int(gop_arg if gop_arg is not None and gop_arg > 0 else getattr(args, "clip_len", EVAL_GOP_LEN))
+
+    if data_root and Path(data_root).exists():
+        stride = max(1, clip_len // 2) if is_train else clip_len
+        real_ds = _construct_real_dataset(
+            data_root=data_root,
+            shard_id=sid,
+            num_shards=nsh,
+            clip_len=clip_len,
+            stride=stride,
+            img_hw=img_hw,
+            is_train=is_train,
+            enforce_disjoint_split=getattr(args, "disjoint_split", True),
+            split=eff_split,
+        )
+        if len(real_ds) > 0:
+            print(
+                f"[Dataset] Loaded {len(real_ds)} real VCM clips [{eff_split.upper()}] "
+                f"({len(real_ds) * clip_len} frames, {img_hw[1]}x{img_hw[0]}, clip_len={clip_len}, stride={stride}) "
+                f"from '{data_root}' for shard {sid}/{nsh}"
+            )
+            return real_ds
+
+    return ShardedVideoClipDataset(
+        data_root=data_root,
+        shard_id=sid,
+        num_shards=nsh,
+        clip_len=clip_len,
+        img_size=img_hw,
+        total_virtual_clips=nsh * default_virtual_mult,
+    )
+
+
+def _deterministic_blur_ema(video: torch.Tensor) -> torch.Tensor:
+    b, t, _, h, w = video.shape
+    blur_v = gaussian_blur_5x5(
+        gaussian_blur_5x5(gaussian_blur_5x5(video.view(b * t, 3, h, w)))
+    ).view(b, t, 3, h, w)
+    dx = torch.nn.functional.pad((video[..., :, 1:] - video[..., :, :-1]).abs(), (0, 1, 0, 0))
+    dy = torch.nn.functional.pad((video[..., 1:, :] - video[..., :-1, :]).abs(), (0, 0, 0, 1))
+    edge_gate = torch.clamp((dx + dy).mean(dim=2, keepdim=True) * 6.0, 0.0, 1.0)
+    ema_frames = []
+    bg_prev = None
+    for step_t in range(t):
+        v_t = video[:, step_t]
+        b_t = blur_v[:, step_t]
+        if step_t > 0 and bg_prev is not None:
+            diff_mag = (v_t - video[:, step_t - 1]).abs().mean(dim=1, keepdim=True)
+            static_w = 0.85 * torch.exp(-15.0 * diff_mag)
+            b_t = static_w * bg_prev + (1.0 - static_w) * b_t
+        bg_prev = b_t
+        e_t = edge_gate[:, step_t]
+        ema_frames.append(e_t * v_t + (1.0 - e_t) * b_t)
+    return torch.stack(ema_frames, dim=1)
+
+
+def _extract_valid_track_ids(
+    sample: Dict[str, Any], gt_boxes_batch: Optional[torch.Tensor]
+) -> Optional[List[List[int]]]:
+    if "gt_track_ids" not in sample or gt_boxes_batch is None:
+        return None
+    tids_t = sample["gt_track_ids"]
+    if tids_t.dim() == 3:
+        tids_t = tids_t[0]
+    gt_t = gt_boxes_batch[0].detach().cpu()
+    tids_cpu = tids_t.detach().cpu()
+    per_frame_ids: List[List[int]] = []
+    for f_idx in range(gt_t.shape[0]):
+        valid_mask = gt_t[f_idx, :, 0] >= 0.0
+        per_frame_ids.append([int(x) for x in tids_cpu[f_idx][valid_mask].tolist()])
+    return per_frame_ids
+
+
+def run_train_shard(args: argparse.Namespace) -> None:
+    if getattr(args, "use_yolov8s", False):
+        raise ValueError(
+            "F04 contract violation: --use_yolov8s is strictly forbidden in train mode. "
+            "Training uses Frozen Faster R-CNN ResNet50-FPN v2 ONLY so YOLOv8s remains an unseen zero-shot evaluator."
+        )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    n_gpus = torch.cuda.device_count()
+    preset_cfg = ABLATION_PRESETS[args.variant]
+    img_h, img_w = resolve_hw(args)
+
+    print(
+        f"[Train Shard {args.shard_id}/{args.num_shards}] "
+        f"Variant={args.variant} | Size={img_w}x{img_h} | Device={device} (GPUs={n_gpus})"
+    )
+
+    dataset = build_sharded_dataset(
+        args,
+        is_train=True,
+        default_virtual_mult=20,
+        split="train",
+        shard_id=args.data_shard_id if args.data_shard_id >= 0 else None,
+        num_shards=args.data_num_shards if args.data_num_shards > 0 else None,
+        clip_len_override=args.clip_len,
+    )
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=2,
+        pin_memory=(device.type == "cuda"),
+    )
+
+    # Shared initialization seed across all shards for linear mode connectivity in Model Soup (F15).
+    torch.manual_seed(2026)
+    np.random.seed(2026)
+
+    base_model = TemporalSCOPE(
+        base_ch=48,
+        num_families=2,
+        cond_dim=64,
+        qg_size=16,
+        max_delta_qp=preset_cfg["max_delta_qp"],
+    ).to(device)
+    model: nn.Module = base_model
+
+    codec_ste = HybridX265STE(
+        use_real_x265_in_forward=bool(preset_cfg["use_real_x265_ste"] and args.enable_x265_ste)
+    ).to(device)
+
+    # Single-teacher Faster R-CNN ResNet50-FPN v2 ONLY (F04 fix).
+    fpn_teacher = FrozenFPNDetectorTeacher(
+        pretrained=args.use_pretrained_fpn,
+        use_yolov8s=False,
+    ).to(device)
+
+    criterion = VCMTemporalPreEditLoss(
+        lambda_temp_bg=preset_cfg["lambda_temp_bg"],
+        lambda_temp_obj=preset_cfg["lambda_temp_obj"],
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
+    warmup_epochs = 2
+    cosine_t_max = max(1, args.epochs - warmup_epochs)
+    eta_min = min(args.lr, 1e-6)
+    min_lr_factor = eta_min / max(args.lr, 1e-12)
+
+    def _lr_lambda(epoch_idx: int) -> float:
+        ep = epoch_idx + 1
+        if ep <= warmup_epochs:
+            return float(ep) / float(warmup_epochs)
+        if ep <= warmup_epochs + cosine_t_max:
+            progress = float(ep - warmup_epochs) / float(cosine_t_max)
+            return min_lr_factor + (1.0 - min_lr_factor) * 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_factor
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
+
+    val_ds = None
+    if args.patience > 0:
+        val_candidate = build_sharded_dataset(
+            args,
+            is_train=False,
+            split="val",
+            shard_id=0,
+            num_shards=1,
+            clip_len_override=TRAIN_CLIP_LEN,
+        )
+        if isinstance(val_candidate, RealVCMVideoDataset) and len(val_candidate) > 0:
+            val_ds = torch.utils.data.Subset(
+                val_candidate, list(range(0, len(val_candidate), max(1, args.val_subsample)))
+            )
+    VAL_SEVERITIES = (0.2, 0.6)
+
+    @torch.no_grad()
+    def validate() -> float:
+        model.eval()
+        total, count = 0.0, 0
+        val_bs = max(1, getattr(args, "val_batch_size", 4))
+        for vb in DataLoader(val_ds, batch_size=val_bs, shuffle=False):
+            v_video = vb["video"].to(device)
+            v_attn = vb["m_attn"].to(device)
+            v_det = vb["m_det"].to(device)
+            vb_n, vt, _, vh, vw = v_video.shape
+            for sev_val in VAL_SEVERITIES:
+                v_sev = torch.full((vb_n,), sev_val, device=device, dtype=torch.float32)
+                v_fam = torch.zeros((vb_n,), device=device, dtype=torch.long)
+                v_out = model(
+                    v_video,
+                    v_fam,
+                    v_sev,
+                    reuse_iframe_qp=preset_cfg["reuse_iframe_qp"],
+                    disable_temporal=preset_cfg["disable_temporal"],
+                )
+                v_qp = v_out["ctu_qp_offsets"] if preset_cfg["max_delta_qp"] > 0 else None
+                v_codec = _call_codec_ste(codec_ste, v_out["i_edit"], v_sev, v_qp, family_id=v_fam)
+                v_teacher = fpn_teacher.extract_fpn_features(v_video.view(vb_n * vt, 3, vh, vw))
+                v_student = fpn_teacher.extract_fpn_features(
+                    v_codec["video_recon"].view(vb_n * vt, 3, vh, vw)
+                )
+                v_losses = _call_criterion(
+                    criterion,
+                    i_edit=v_out["i_edit"],
+                    i_recon=v_codec["video_recon"],
+                    attn_map=v_out["attn_map"],
+                    eff_attn_map=v_out.get("eff_attn_map"),
+                    delta_obj=v_out["delta_obj"],
+                    delta_bg=v_out["delta_bg"],
+                    rate_proxy_bpp=v_codec["rate_proxy_bpp"],
+                    m_attn=v_attn,
+                    m_det=v_det,
+                    teacher_fpn_feats=v_teacher,
+                    student_fpn_feats=v_student,
+                    i_frame_bpp_proxy=v_codec.get("i_frame_bpp_proxy"),
+                    p_frame_bpp_proxy=v_codec.get("p_frame_bpp_proxy"),
+                    ctu_qp_offsets=v_out.get("ctu_qp_offsets"),
+                    i_orig=v_video,
+                    aligned_prev_edit=v_out.get("aligned_prev_edit"),
+                    aligned_prev_orig=v_out.get("aligned_prev_orig"),
+                    warp_valid_mask=v_out.get("warp_valid_mask"),
+                )
+                total += float(v_losses["loss_total"].item())
+                count += 1
+        model.train()
+        return total / max(1, count)
+
+    best_val = float("inf")
+    best_epoch = 0
+    best_state = None
+    epochs_since_best = 0
+    stopped_early = False
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        git_rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT_DIR, text=True).strip()
+    except (OSError, subprocess.SubprocessError):
+        git_rev = None
+
+    training_configuration = {
+        "schema_version": SCHEMA_VERSION,
+        "initialization_seed": 2026,
+        "preset": preset_cfg,
+        "codec": CODEC_CONFIGURATION,
+        "use_yolov8s": False,
+        "multi_codec_families": [0, 1] if getattr(args, "train_multi_codec", True) else [0],
+        "model": {
+            "base_ch": 48,
+            "num_families": 2,
+            "cond_dim": 64,
+            "qg_size": 16,
+            "max_delta_qp": preset_cfg["max_delta_qp"],
+            "max_obj_res": float(getattr(base_model, "max_obj_res", 0.025)),
+        },
+        "loss": {
+            "lambda_det": criterion.lambda_det,
+            "lambda_attn": criterion.lambda_attn,
+            "lambda_attn_sparse": criterion.lambda_attn_sparse,
+            "lambda_rate_i": criterion.lambda_rate_i,
+            "lambda_rate_p": criterion.lambda_rate_p,
+            "lambda_rate_p_log": criterion.lambda_rate_p_log,
+            "lambda_fg_pix": criterion.lambda_fg_pix,
+            "lambda_fg_grad": criterion.lambda_fg_grad,
+            "lambda_fg_recon": criterion.lambda_fg_recon,
+            "lambda_fg_sat": criterion.lambda_fg_sat,
+            "lambda_dqp_fg": criterion.lambda_dqp_fg,
+            "lambda_dqp_mono": criterion.lambda_dqp_mono,
+            "lambda_dqp_smooth": criterion.lambda_dqp_smooth,
+            "lambda_temp_bg": criterion.lambda_temp_bg,
+            "lambda_temp_obj": criterion.lambda_temp_obj,
+        },
+        "lr_schedule": {
+            "warmup_epochs": warmup_epochs,
+            "cosine_t_max": cosine_t_max,
+            "eta_min": eta_min,
+        },
+        "epochs": args.epochs,
+        "patience": args.patience,
+        "min_epochs": args.min_epochs,
+        "min_delta": args.min_delta,
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "img_h": img_h,
+        "img_w": img_w,
+        "clip_len": args.clip_len,
+        "val_every": args.val_every,
+        "val_subsample": args.val_subsample,
+        "data_shard_id": args.data_shard_id,
+        "data_num_shards": args.data_num_shards,
+        "pretrained_detector_requested": args.use_pretrained_fpn,
+        "real_detector_loaded": fpn_teacher.use_torchvision,
+        "validation_severities": list(VAL_SEVERITIES),
+        "git_revision": git_rev,
+    }
+
+    history = []
+    grad_accum_steps = max(1, getattr(args, "grad_accum_steps", 1))
+    train_multi_codec = bool(getattr(args, "train_multi_codec", True))
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        epoch_loss = 0.0
+        t0 = time.perf_counter()
+
+        optimizer.zero_grad(set_to_none=True)
+        for step_idx, batch in enumerate(loader):
+            video = batch["video"].to(device)
+            m_attn = batch["m_attn"].to(device)
+            m_det = batch["m_det"].to(device)
+            b, t, _, h, w = video.shape
+
+            # Alternate/sample across family_id=0 (libx265) and family_id=1 (libx264) (F10 fix).
+            if train_multi_codec:
+                family_id = torch.tensor(
+                    [(step_idx + bi) % 2 for bi in range(b)],
+                    device=device,
+                    dtype=torch.long,
+                )
+            else:
+                family_id = torch.zeros((b,), device=device, dtype=torch.long)
+
+            # Sample severity densely across [0.15, 0.90] (QP ~25.75..44.5, covering CRFs 27..42).
+            severity = 0.15 + 0.75 * torch.rand((b,), device=device, dtype=torch.float32)
+
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                out = model(
+                    video,
+                    family_id,
+                    severity,
+                    reuse_iframe_qp=preset_cfg["reuse_iframe_qp"],
+                    disable_temporal=preset_cfg["disable_temporal"],
+                )
+                qp_ste = out["ctu_qp_offsets"] if preset_cfg["max_delta_qp"] > 0 else None
+                codec_out = _call_codec_ste(codec_ste, out["i_edit"], severity, qp_ste, family_id=family_id)
+
+                i_clean_flat = video.view(b * t, 3, h, w)
+                i_recon_flat = codec_out["video_recon"].view(b * t, 3, h, w)
+                with torch.no_grad():
+                    teacher_fpn = fpn_teacher.extract_fpn_features(i_clean_flat)
+                student_fpn = fpn_teacher.extract_fpn_features(i_recon_flat)
+
+                losses = _call_criterion(
+                    criterion,
+                    i_edit=out["i_edit"],
+                    i_recon=codec_out["video_recon"],
+                    attn_map=out["attn_map"],
+                    eff_attn_map=out.get("eff_attn_map"),
+                    delta_obj=out["delta_obj"],
+                    delta_bg=out["delta_bg"],
+                    rate_proxy_bpp=codec_out["rate_proxy_bpp"],
+                    m_attn=m_attn,
+                    m_det=m_det,
+                    teacher_fpn_feats=teacher_fpn,
+                    student_fpn_feats=student_fpn,
+                    i_frame_bpp_proxy=codec_out.get("i_frame_bpp_proxy"),
+                    p_frame_bpp_proxy=codec_out.get("p_frame_bpp_proxy"),
+                    ctu_qp_offsets=out.get("ctu_qp_offsets"),
+                    i_orig=video,
+                    aligned_prev_edit=out.get("aligned_prev_edit"),
+                    aligned_prev_orig=out.get("aligned_prev_orig"),
+                    warp_valid_mask=out.get("warp_valid_mask"),
+                )
+                loss_scaled = losses["loss_total"] / grad_accum_steps
+
+            scaler.scale(loss_scaled).backward()
+            if (step_idx + 1) % grad_accum_steps == 0 or (step_idx + 1) == len(loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(base_model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+            epoch_loss += float(losses["loss_total"].item())
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        epoch_lr = optimizer.param_groups[0]["lr"]
+        scheduler.step()
+
+        avg_loss = epoch_loss / max(1, len(loader))
+        dt = time.perf_counter() - t0
+        print(
+            f"  Epoch {epoch:02d}/{args.epochs:02d} | Loss={avg_loss:.4f} | LR={epoch_lr:.2e} | Time={dt:.1f}s"
+        )
+        history.append({"epoch": epoch, "loss_total": avg_loss, "lr": epoch_lr, "time_sec": dt})
+
+        if val_ds is not None and (epoch % args.val_every == 0 or epoch == args.epochs):
+            val_loss = validate()
+            history[-1]["val_loss"] = val_loss
+            improved = val_loss < best_val - args.min_delta
+            print(
+                f"    [Val] epoch {epoch:03d} val_loss={val_loss:.4f} best={best_val:.4f} "
+                f"lr={epoch_lr:.2e} {'*' if improved else ''}"
+            )
+            if improved:
+                best_val, best_epoch, epochs_since_best = val_loss, epoch, 0
+                best_state = {k: v.detach().cpu().clone() for k, v in base_model.state_dict().items()}
+                torch.save(
+                    {
+                        "schema_version": SCHEMA_VERSION,
+                        "shard_id": args.shard_id,
+                        "num_shards": args.num_shards,
+                        "variant": args.variant,
+                        "state_dict": best_state,
+                        "history": history,
+                        "best_epoch": best_epoch,
+                        "best_val_loss": best_val,
+                        "stopped_early": False,
+                        "epochs_run": len(history),
+                        "partial": True,
+                        "training_configuration": training_configuration,
+                        "train_sequences": list(TRAIN_SEQUENCES),
+                        "val_sequences": list(VAL_SEQUENCES),
+                    },
+                    out_dir / f"tscope_{args.variant}_shard{args.shard_id:02d}of{args.num_shards:02d}.pt",
+                )
+            else:
+                epochs_since_best += args.val_every
+            if epoch >= args.min_epochs and epochs_since_best >= args.patience:
+                stopped_early = True
+                print(f"  Converged: no val improvement for {epochs_since_best} epochs. Stop at epoch {epoch}.")
+                break
+
+    ckpt_path = out_dir / f"tscope_{args.variant}_shard{args.shard_id:02d}of{args.num_shards:02d}.pt"
+    raw_state = best_state if best_state is not None else base_model.state_dict()
+    torch.save(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "shard_id": args.shard_id,
+            "num_shards": args.num_shards,
+            "variant": args.variant,
+            "state_dict": raw_state,
+            "history": history,
+            "best_epoch": best_epoch,
+            "best_val_loss": best_val if best_state is not None else None,
+            "stopped_early": stopped_early,
+            "epochs_run": len(history),
+            "training_configuration": training_configuration,
+            "train_sequences": list(TRAIN_SEQUENCES),
+            "val_sequences": list(VAL_SEQUENCES),
+        },
+        ckpt_path,
+    )
+    print(f"Saved shard checkpoint ({ckpt_path.stat().st_size / 1e6:.2f} MB) -> {ckpt_path}")
+
+
+@torch.no_grad()
+def run_poc_wishlist2_and_eval_shard(args: argparse.Namespace) -> None:
+    """Single-variant real-codec sharded evaluation on 32-frame 640x384 MOT17 clips."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    eval_gop_len = int(getattr(args, "gop_len", None) or getattr(args, "clip_len", EVAL_GOP_LEN))
+    dataset = build_sharded_dataset(
+        args,
+        is_train=False,
+        default_virtual_mult=5,
+        split="test",
+        clip_len_override=eval_gop_len,
+    )
+    if not isinstance(dataset, RealVCMVideoDataset) or not args.use_pretrained_fpn or not getattr(args, "disjoint_split", True):
+        raise RuntimeError("Final evaluation requires real held-out MOT17 data, disjoint splits, and pretrained Faster R-CNN")
+
+    img_h, img_w = resolve_hw(args)
+    expected_ids_ref, excluded_tail_ref = expected_mot17_test_frames(eval_gop_len)
+    expected_frame_ids = dataset.physical_frame_manifest()
+    if expected_frame_ids != expected_ids_ref or eval_gop_len != EVAL_GOP_LEN or (img_h, img_w) != (IMG_H, IMG_W):
+        raise RuntimeError(
+            f"Final evaluation requires all {len(expected_ids_ref)} complete-clip MOT17 test frames at {IMG_W}x{IMG_H} gop_len={EVAL_GOP_LEN}"
+        )
+
+    preset_cfg = ABLATION_PRESETS[args.variant]
+    model = TemporalSCOPE(
+        base_ch=48,
+        num_families=2,
+        cond_dim=64,
+        qg_size=16,
+        max_delta_qp=preset_cfg["max_delta_qp"],
+    ).to(device)
+    if args.ckpt and Path(args.ckpt).exists():
+        ckpt = torch.load(args.ckpt, map_location=device, weights_only=True)
+        validate_soup_provenance(ckpt, args.variant, require_validation=True)
+        model.load_state_dict(ckpt["state_dict"], strict=True)
+        print(f"[Eval Shard {args.shard_id}] Loaded validated soup checkpoint: {args.ckpt}")
+    else:
+        raise FileNotFoundError(f"Validated soup checkpoint required for eval_poc but not found: '{args.ckpt}'.")
+    model.eval()
+
+    spatial_model = TemporalSCOPE(
+        base_ch=48, num_families=2, cond_dim=64, qg_size=16, max_delta_qp=0.0
+    ).to(device)
+    spatial_ckpt = Path(args.ckpt).parent / "tscope_soup_spatial_only_scope.pt"
+    if not spatial_ckpt.is_file():
+        raise FileNotFoundError("Final evaluation requires the dedicated spatial variant soup")
+    s_state = torch.load(spatial_ckpt, map_location=device, weights_only=True)
+    validate_soup_provenance(s_state, "spatial_only_scope", require_validation=True)
+    spatial_model.load_state_dict(s_state["state_dict"], strict=True)
+    spatial_model.eval()
+
+    codec = HybridX265STE(use_real_x265_in_forward=True).to(device)
+    fpn_teacher = FrozenFPNDetectorTeacher(
+        pretrained=args.use_pretrained_fpn,
+        use_yolov8s=getattr(args, "use_yolov8s", False),
+    ).to(device)
+    if not fpn_teacher.use_torchvision or fpn_teacher.detector is None:
+        raise RuntimeError("Final AP requires actual pretrained Faster R-CNN weights; detector fallback is forbidden")
+
+    codec_family = int(getattr(args, "codec_family", 0))
+    bframes = int(getattr(args, "bframes", 0))
+    codec_meta = copy.deepcopy(CODEC_CONFIGURATION)
+    codec_meta["bframes"] = bframes
+    codec_meta["encoder"] = "libx265" if codec_family == 0 else "libx264"
+
+    metadata = {
+        "shard_id": args.shard_id,
+        "num_shards": args.num_shards,
+        "variant": args.variant,
+        "checkpoint_sha256": sha256_file(args.ckpt),
+        "spatial_checkpoint_sha256": sha256_file(spatial_ckpt),
+        "crfs": list(CRFS),
+        "dataset": "MOT17",
+        "split": "test",
+        "expected_frame_ids": expected_frame_ids,
+        "excluded_tail_frame_ids": excluded_tail_ref,
+        "detector": {
+            "name": "fasterrcnn_resnet50_fpn_v2",
+            "pretrained": True,
+            "weights": "FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT",
+            "yolov8s": bool(fpn_teacher.use_yolov8s),
+            "yolov8s_is_zero_shot": True,
+        },
+        "codec": codec_meta,
+        "metric_policy": METRIC_POLICY,
+        "preprocessing": copy.deepcopy(PREPROCESSING),
+        "soup_validation": ckpt["validation"],
+    }
+
+    shard_records = []
+    for idx in range(len(dataset)):
+        sample = dataset[idx]
+        video = sample["video"].unsqueeze(0).to(device)
+        m_det = sample["m_det"].unsqueeze(0).to(device)
+        clip_id = int(sample["clip_id"].item())
+        b, t, _, h, w = video.shape
+        gt_boxes = sample["gt_boxes"].unsqueeze(0).to(device) if "gt_boxes" in sample else None
+        ignore_boxes = sample["ignore_boxes"].unsqueeze(0).to(device) if "ignore_boxes" in sample else None
+        valid_track_ids = _extract_valid_track_ids(sample, gt_boxes)
+
+        v_det_ema = _deterministic_blur_ema(video)
+        blur_v = gaussian_blur_5x5(
+            gaussian_blur_5x5(gaussian_blur_5x5(video.view(b * t, 3, h, w)))
+        ).view(b, t, 3, h, w)
+        v_oracle = m_det * video + (1.0 - m_det) * blur_v[:, 0:1].expand_as(blur_v)
+
+        for qp in CRFS:
+            sev = torch.tensor([(qp - 22.0) / 25.0], device=device, dtype=torch.float32)
+            fam = torch.tensor([codec_family], device=device, dtype=torch.long)
+
+            base_out = _call_evaluate_real_codec(codec, video, qp, None, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+            det_ema_out = _call_evaluate_real_codec(codec, v_det_ema, qp, None, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+
+            pred_spatial = spatial_model(video, fam, sev, reuse_iframe_qp=False, disable_temporal=True)
+            spatial_out = _call_evaluate_real_codec(codec, pred_spatial["i_edit"], qp, None, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+
+            pred_tscope = model(
+                video,
+                fam,
+                sev,
+                reuse_iframe_qp=preset_cfg["reuse_iframe_qp"],
+                disable_temporal=preset_cfg["disable_temporal"],
+            )
+            tscope_qp = pred_tscope["ctu_qp_offsets"] if preset_cfg["max_delta_qp"] > 0 else None
+            tscope_out = _call_evaluate_real_codec(codec, pred_tscope["i_edit"], qp, tscope_qp, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+
+            oracle_qp = model.compute_ctu_qp_offsets(
+                m_det, reuse_iframe_across_gop=preset_cfg["reuse_iframe_qp"]
+            )
+            oracle_out = _call_evaluate_real_codec(codec, v_oracle, qp, oracle_qp, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+
+            for method_name, c_out in [
+                ("anchor_x265", base_out),
+                ("deterministic_blur_ema", det_ema_out),
+                ("spatial_scope_framewise", spatial_out),
+                ("tscope_temporal_ctu_qp", tscope_out),
+                ("oracle_gt_mask_upper_bound", oracle_out),
+            ]:
+                recon = c_out["video_recon"]
+                acc_metrics = fpn_teacher.evaluate_task_accuracy(
+                    video,
+                    recon,
+                    m_det,
+                    gt_boxes=gt_boxes,
+                    ignore_boxes=ignore_boxes,
+                    require_real_detector=True,
+                    return_raw_detections=True,
+                )
+                raw_det_keys = ["gt_boxes", "ignore_boxes", "pred_boxes", "pred_scores"]
+                if "yolo_pred_boxes" in acc_metrics["raw_detections"]:
+                    raw_det_keys.extend(["yolo_pred_boxes", "yolo_pred_scores"])
+                raw_payload = {
+                    key: [value.tolist() for value in acc_metrics["raw_detections"][key]]
+                    for key in raw_det_keys
+                }
+                if valid_track_ids is not None:
+                    raw_payload["gt_track_ids"] = valid_track_ids
+
+                shard_records.append(
+                    {
+                        "shard_id": args.shard_id,
+                        "variant": args.variant,
+                        "dataset": "MOT17_real",
+                        "clip_id": clip_id,
+                        "qp": qp,
+                        "crf": qp,
+                        "frame_ids": sample["frame_ids"],
+                        "packet_sizes": c_out["packet_sizes"],
+                        "frame_types": c_out["frame_types"],
+                        "height": h,
+                        "width": w,
+                        "raw_detections": raw_payload,
+                        "method": method_name,
+                        "total_bpp": round(float(c_out["total_bpp"]), 5),
+                        "i_frame_bpp": round(float(c_out["i_frame_bpp"]), 5),
+                        "p_frame_bpp": round(float(c_out["p_frame_bpp"]), 5),
+                        "gt_ap50_pct": acc_metrics["gt_ap50_pct"],
+                        "gt_ap50_95_pct": acc_metrics["gt_ap50_95_pct"],
+                        "yolo_gt_ap50_pct": acc_metrics.get("yolo_gt_ap50_pct"),
+                        "yolo_gt_ap50_95_pct": acc_metrics.get("yolo_gt_ap50_95_pct"),
+                        "teacher_ap50_pct": acc_metrics["teacher_ap50_pct"],
+                        "map50_pct": acc_metrics["map50_pct"],
+                        "map50_95_pct": acc_metrics["map50_95_pct"],
+                        "task_roi_psnr_db": acc_metrics["task_roi_psnr_db"],
+                        "fpn_cos_sim_pct": acc_metrics["fpn_cos_sim_pct"],
+                    }
+                )
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = out_dir / f"eval_shard_{args.shard_id:02d}of{args.num_shards:02d}_{args.variant}.json"
+    for record in shard_records:
+        for key, value in record.items():
+            if isinstance(value, float) and not np.isfinite(value):
+                record[key] = None
+    with open(json_path, "x", encoding="utf-8") as f:
+        json.dump(
+            {"schema_version": SCHEMA_VERSION, "metadata": metadata, "records": shard_records},
+            f,
+            indent=2,
+            allow_nan=False,
+        )
+    print(f"[Eval Shard {args.shard_id}/{args.num_shards}] Wrote {len(shard_records)} records -> {json_path}")
+
+
+@torch.no_grad()
+def run_eval_all_variants_shards(args: argparse.Namespace) -> None:
+    """Evaluates all 5 validated v3 variant soups across assigned shards at 640x384 gop_len=32."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    soup_dir = Path(args.soup_dir)
+    spatial_ckpt = soup_dir / "tscope_soup_spatial_only_scope.pt"
+    if not spatial_ckpt.is_file():
+        raise FileNotFoundError(f"Missing spatial soup checkpoint: {spatial_ckpt}")
+    spatial_sha256 = sha256_file(spatial_ckpt)
+
+    models: Dict[str, TemporalSCOPE] = {}
+    ckpt_hashes: Dict[str, str] = {}
+    soup_validations: Dict[str, Any] = {}
+    for variant in VARIANTS:
+        v_path = soup_dir / f"tscope_soup_{variant}.pt"
+        if not v_path.is_file():
+            raise FileNotFoundError(f"Missing validated soup checkpoint: {v_path}")
+        ckpt_hashes[variant] = sha256_file(v_path)
+        ckpt = torch.load(v_path, map_location=device, weights_only=True)
+        validate_soup_provenance(ckpt, variant, require_validation=True)
+        soup_validations[variant] = ckpt["validation"]
+        m = TemporalSCOPE(
+            base_ch=48,
+            num_families=2,
+            cond_dim=64,
+            qg_size=16,
+            max_delta_qp=ABLATION_PRESETS[variant]["max_delta_qp"],
+        ).to(device)
+        m.load_state_dict(ckpt["state_dict"], strict=True)
+        m.eval()
+        models[variant] = m
+
+    codec = HybridX265STE(use_real_x265_in_forward=True).to(device)
+    fpn_teacher = FrozenFPNDetectorTeacher(
+        pretrained=args.use_pretrained_fpn,
+        use_yolov8s=getattr(args, "use_yolov8s", False),
+    ).to(device)
+    if not fpn_teacher.use_torchvision or fpn_teacher.detector is None:
+        raise RuntimeError("Final AP requires actual pretrained Faster R-CNN weights; detector fallback is forbidden")
+
+    eval_gop_len = int(getattr(args, "gop_len", None) or EVAL_GOP_LEN)
+    img_h, img_w = resolve_hw(args)
+    codec_family = int(getattr(args, "codec_family", 0))
+    bframes = int(getattr(args, "bframes", 0))
+    expected_ids_ref, excluded_tail_ref = expected_mot17_test_frames(eval_gop_len)
+
+    shard_ids = args.shard_ids if getattr(args, "shard_ids", None) else [args.shard_id]
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    codec_meta = copy.deepcopy(CODEC_CONFIGURATION)
+    codec_meta["bframes"] = bframes
+    codec_meta["encoder"] = "libx265" if codec_family == 0 else "libx264"
+
+    for sid in shard_ids:
+        dataset = build_sharded_dataset(
+            args,
+            is_train=False,
+            default_virtual_mult=5,
+            split="test",
+            shard_id=sid,
+            num_shards=args.num_shards,
+            clip_len_override=eval_gop_len,
+        )
+        if not isinstance(dataset, RealVCMVideoDataset) or not args.use_pretrained_fpn or not getattr(args, "disjoint_split", True):
+            raise RuntimeError("Final evaluation requires real held-out MOT17 data, disjoint splits, and pretrained Faster R-CNN")
+        expected_frame_ids = dataset.physical_frame_manifest()
+        if expected_frame_ids != expected_ids_ref or eval_gop_len != EVAL_GOP_LEN or (img_h, img_w) != (IMG_H, IMG_W):
+            raise RuntimeError(
+                f"Final evaluation requires all {len(expected_ids_ref)} complete-clip MOT17 test frames at {IMG_W}x{IMG_H} gop_len={EVAL_GOP_LEN}"
+            )
+
+        records_by_variant: Dict[str, List[Dict[str, Any]]] = {v: [] for v in VARIANTS}
+        t_shard = time.perf_counter()
+        for idx in range(len(dataset)):
+            sample = dataset[idx]
+            video = sample["video"].unsqueeze(0).to(device)
+            m_det = sample["m_det"].unsqueeze(0).to(device)
+            clip_id = int(sample["clip_id"].item())
+            b, t, _, h, w = video.shape
+            gt_boxes = sample["gt_boxes"].unsqueeze(0).to(device) if "gt_boxes" in sample else None
+            ignore_boxes = sample["ignore_boxes"].unsqueeze(0).to(device) if "ignore_boxes" in sample else None
+            valid_track_ids = _extract_valid_track_ids(sample, gt_boxes)
+
+            v_det_ema = _deterministic_blur_ema(video)
+            blur_v = gaussian_blur_5x5(
+                gaussian_blur_5x5(gaussian_blur_5x5(video.view(b * t, 3, h, w)))
+            ).view(b, t, 3, h, w)
+            v_oracle = m_det * video + (1.0 - m_det) * blur_v[:, 0:1].expand_as(blur_v)
+
+            clean_flat = video.view(b * t, 3, h, w)
+            # Chunk clean detector inference to keep T4 VRAM low on 32-frame 640x384 clips
+            clean_dets = []
+            for start_f in range(0, clean_flat.shape[0], 8):
+                clean_dets.extend(
+                    fpn_teacher.detector(list(torch.clamp(clean_flat[start_f : start_f + 8], 0.0, 1.0)))
+                )
+            cached_clean_info = {
+                "t_feats": fpn_teacher.extract_fast_pyramid(clean_flat),
+                "clean_dets": clean_dets,
+            }
+
+            def evaluate_encoded(c_out: Dict[str, Any]) -> Dict[str, Any]:
+                recon = c_out["video_recon"]
+                acc = fpn_teacher.evaluate_task_accuracy(
+                    video,
+                    recon,
+                    m_det,
+                    gt_boxes=gt_boxes,
+                    ignore_boxes=ignore_boxes,
+                    require_real_detector=True,
+                    return_raw_detections=True,
+                    cached_clean_info=cached_clean_info,
+                )
+                raw_keys = ["gt_boxes", "ignore_boxes", "pred_boxes", "pred_scores"]
+                if "yolo_pred_boxes" in acc["raw_detections"]:
+                    raw_keys.extend(["yolo_pred_boxes", "yolo_pred_scores"])
+                raw_payload = {k: [v.tolist() for v in acc["raw_detections"][k]] for k in raw_keys}
+                if valid_track_ids is not None:
+                    raw_payload["gt_track_ids"] = valid_track_ids
+                return {
+                    "packet_sizes": c_out["packet_sizes"],
+                    "frame_types": c_out["frame_types"],
+                    "raw_detections": raw_payload,
+                    "total_bpp": round(float(c_out["total_bpp"]), 5),
+                    "i_frame_bpp": round(float(c_out["i_frame_bpp"]), 5),
+                    "p_frame_bpp": round(float(c_out["p_frame_bpp"]), 5),
+                    "gt_ap50_pct": acc["gt_ap50_pct"],
+                    "gt_ap50_95_pct": acc["gt_ap50_95_pct"],
+                    "yolo_gt_ap50_pct": acc.get("yolo_gt_ap50_pct"),
+                    "yolo_gt_ap50_95_pct": acc.get("yolo_gt_ap50_95_pct"),
+                    "teacher_ap50_pct": acc["teacher_ap50_pct"],
+                    "map50_pct": acc["map50_pct"],
+                    "map50_95_pct": acc["map50_95_pct"],
+                    "task_roi_psnr_db": acc["task_roi_psnr_db"],
+                    "fpn_cos_sim_pct": acc["fpn_cos_sim_pct"],
+                }
+
+            for qp in CRFS:
+                sev = torch.tensor([(qp - 22.0) / 25.0], device=device, dtype=torch.float32)
+                fam = torch.tensor([codec_family], device=device, dtype=torch.long)
+
+                base_eval = evaluate_encoded(
+                    _call_evaluate_real_codec(codec, video, qp, None, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                )
+                det_ema_eval = evaluate_encoded(
+                    _call_evaluate_real_codec(codec, v_det_ema, qp, None, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                )
+
+                pred_spatial = models["spatial_only_scope"](video, fam, sev, reuse_iframe_qp=False, disable_temporal=True)
+                spatial_eval = evaluate_encoded(
+                    _call_evaluate_real_codec(codec, pred_spatial["i_edit"], qp, None, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                )
+
+                oracle_qp_4_noreuse = models["full_tscope"].compute_ctu_qp_offsets(m_det, reuse_iframe_across_gop=False)
+                oracle_eval_4_noreuse = evaluate_encoded(
+                    _call_evaluate_real_codec(codec, v_oracle, qp, oracle_qp_4_noreuse, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                )
+
+                oracle_qp_4_reuse = models["iwa_gop_qp_reuse"].compute_ctu_qp_offsets(m_det, reuse_iframe_across_gop=True)
+                oracle_eval_4_reuse = evaluate_encoded(
+                    _call_evaluate_real_codec(codec, v_oracle, qp, oracle_qp_4_reuse, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                )
+
+                oracle_qp_0 = models["wo_ctu_delta_qp"].compute_ctu_qp_offsets(m_det, reuse_iframe_across_gop=False)
+                oracle_eval_0 = evaluate_encoded(
+                    _call_evaluate_real_codec(codec, v_oracle, qp, oracle_qp_0, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                )
+
+                tscope_evals: Dict[str, Dict[str, Any]] = {"spatial_only_scope": spatial_eval}
+                for variant in ("full_tscope", "wo_ctu_delta_qp", "iwa_gop_qp_reuse", "wo_x265_ste_proxy"):
+                    p_cfg = ABLATION_PRESETS[variant]
+                    pred_v = models[variant](
+                        video,
+                        fam,
+                        sev,
+                        reuse_iframe_qp=p_cfg["reuse_iframe_qp"],
+                        disable_temporal=p_cfg["disable_temporal"],
+                    )
+                    v_qp = pred_v["ctu_qp_offsets"] if p_cfg["max_delta_qp"] > 0 else None
+                    tscope_evals[variant] = evaluate_encoded(
+                        _call_evaluate_real_codec(codec, pred_v["i_edit"], qp, v_qp, family_id=codec_family, gop_len=eval_gop_len, bframes=bframes)
+                    )
+
+                for variant in VARIANTS:
+                    if variant in ("full_tscope", "wo_x265_ste_proxy"):
+                        oracle_ev = oracle_eval_4_noreuse
+                    elif variant == "iwa_gop_qp_reuse":
+                        oracle_ev = oracle_eval_4_reuse
+                    else:
+                        oracle_ev = oracle_eval_0
+
+                    for method_name, m_ev in [
+                        ("anchor_x265", base_eval),
+                        ("deterministic_blur_ema", det_ema_eval),
+                        ("spatial_scope_framewise", spatial_eval),
+                        ("tscope_temporal_ctu_qp", tscope_evals[variant]),
+                        ("oracle_gt_mask_upper_bound", oracle_ev),
+                    ]:
+                        rec = {
+                            "shard_id": sid,
+                            "variant": variant,
+                            "dataset": "MOT17_real",
+                            "clip_id": clip_id,
+                            "qp": qp,
+                            "crf": qp,
+                            "frame_ids": sample["frame_ids"],
+                            "packet_sizes": m_ev["packet_sizes"],
+                            "frame_types": m_ev["frame_types"],
+                            "height": h,
+                            "width": w,
+                            "raw_detections": m_ev["raw_detections"],
+                            "method": method_name,
+                            "total_bpp": m_ev["total_bpp"],
+                            "i_frame_bpp": m_ev["i_frame_bpp"],
+                            "p_frame_bpp": m_ev["p_frame_bpp"],
+                            "gt_ap50_pct": m_ev["gt_ap50_pct"],
+                            "gt_ap50_95_pct": m_ev["gt_ap50_95_pct"],
+                            "yolo_gt_ap50_pct": m_ev["yolo_gt_ap50_pct"],
+                            "yolo_gt_ap50_95_pct": m_ev["yolo_gt_ap50_95_pct"],
+                            "teacher_ap50_pct": m_ev["teacher_ap50_pct"],
+                            "map50_pct": m_ev["map50_pct"],
+                            "map50_95_pct": m_ev["map50_95_pct"],
+                            "task_roi_psnr_db": m_ev["task_roi_psnr_db"],
+                            "fpn_cos_sim_pct": m_ev["fpn_cos_sim_pct"],
+                        }
+                        for k_rec, v_rec in rec.items():
+                            if isinstance(v_rec, float) and not np.isfinite(v_rec):
+                                rec[k_rec] = None
+                        records_by_variant[variant].append(rec)
+
+            if (idx + 1) % 2 == 0 or (idx + 1) == len(dataset):
+                print(
+                    f"[Eval All Variants Shard {sid:02d}] Clip {idx + 1}/{len(dataset)} ({time.perf_counter() - t_shard:.1f}s)",
+                    flush=True,
+                )
+
+        for variant in VARIANTS:
+            metadata = {
+                "shard_id": sid,
+                "num_shards": args.num_shards,
+                "variant": variant,
+                "checkpoint_sha256": ckpt_hashes[variant],
+                "spatial_checkpoint_sha256": spatial_sha256,
+                "crfs": list(CRFS),
+                "dataset": "MOT17",
+                "split": "test",
+                "expected_frame_ids": expected_frame_ids,
+                "excluded_tail_frame_ids": excluded_tail_ref,
+                "detector": {
+                    "name": "fasterrcnn_resnet50_fpn_v2",
+                    "pretrained": True,
+                    "weights": "FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT",
+                    "yolov8s": bool(fpn_teacher.use_yolov8s),
+                    "yolov8s_is_zero_shot": True,
+                },
+                "codec": codec_meta,
+                "metric_policy": METRIC_POLICY,
+                "preprocessing": copy.deepcopy(PREPROCESSING),
+                "soup_validation": soup_validations[variant],
+            }
+            json_path = out_dir / f"eval_shard_{sid:02d}of{args.num_shards:02d}_{variant}.json"
+            with open(json_path, "x", encoding="utf-8") as f:
+                json.dump(
+                    {"schema_version": SCHEMA_VERSION, "metadata": metadata, "records": records_by_variant[variant]},
+                    f,
+                    indent=2,
+                    allow_nan=False,
+                )
+        print(
+            f"[Eval All Variants Shard {sid:02d}/{args.num_shards}] Wrote 5 variant JSONs in {time.perf_counter() - t_shard:.1f}s",
+            flush=True,
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Kaggle Sharded Runner for T-SCOPE v3 VCM")
+    parser.add_argument("--mode", choices=["train", "eval_poc", "eval_all_variants"], default="eval_poc")
+    parser.add_argument("--shard_id", type=int, default=0, help="Shard index: 0 .. num_shards-1")
+    parser.add_argument("--shard_ids", type=int, nargs="+", default=None, help="Multiple shard indices for eval_all_variants")
+    parser.add_argument("--soup_dir", type=str, default="./release_ckpts", help="Directory containing validated soup checkpoints")
+    parser.add_argument("--num_shards", type=int, default=15, help="Total active shards (parameterized, no hardcoded 21)")
+    parser.add_argument("--variant", choices=list(ABLATION_PRESETS.keys()), default="full_tscope")
+    parser.add_argument("--data_root", type=str, default="", help="Path to video dataset on Kaggle")
+    parser.add_argument("--output_dir", type=str, default="./outputs", help="Output folder")
+    parser.add_argument("--ckpt", type=str, default="", help="Validated soup checkpoint for eval_poc")
+    parser.add_argument("--epochs", type=int, default=24)
+    parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--val_batch_size", type=int, default=4)
+    parser.add_argument("--grad_accum_steps", type=int, default=2)
+    parser.add_argument("--clip_len", type=int, default=TRAIN_CLIP_LEN, help="Training clip length (default 4)")
+    parser.add_argument("--gop_len", type=int, default=EVAL_GOP_LEN, help="Evaluation GOP / clip length (default 32)")
+    parser.add_argument("--bframes", type=int, default=0, help="0 for Low-Delay P (IPPP), 4 for Random Access (IBBP)")
+    parser.add_argument("--codec_family", type=int, default=0, help="0 for libx265 (HEVC), 1 for libx264 (AVC)")
+    parser.add_argument("--img_h", type=int, default=IMG_H, help="Evaluation/training height (default 384)")
+    parser.add_argument("--img_w", type=int, default=IMG_W, help="Evaluation/training width (default 640)")
+    parser.add_argument("--img_size", type=int, default=None, help="Optional legacy square resize override")
+    parser.add_argument("--lr", type=float, default=1.5e-4)
+    parser.add_argument("--enable_x265_ste", action="store_true")
+    parser.add_argument("--use_pretrained_fpn", action="store_true", help="Use torchvision Faster R-CNN ResNet50-FPN v2")
+    parser.add_argument(
+        "--use_yolov8s",
+        action="store_true",
+        default=False,
+        help="Evaluate unseen zero-shot YOLOv8s during eval ONLY (strictly forbidden in train mode)",
+    )
+    parser.add_argument("--no_multi_codec", action="store_false", dest="train_multi_codec", default=True)
+    parser.add_argument("--allow_untrained", action="store_true")
+    parser.add_argument("--data_shard_id", type=int, default=-1)
+    parser.add_argument("--data_num_shards", type=int, default=-1)
+    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--val_every", type=int, default=2)
+    parser.add_argument("--val_subsample", type=int, default=2)
+    parser.add_argument("--min_epochs", type=int, default=12)
+    parser.add_argument("--min_delta", type=float, default=5e-4)
+    args = parser.parse_args()
+
+    if args.mode == "train":
+        run_train_shard(args)
+    elif args.mode == "eval_all_variants":
+        run_eval_all_variants_shards(args)
+    else:
+        run_poc_wishlist2_and_eval_shard(args)
+
+
+if __name__ == "__main__":
+    main()

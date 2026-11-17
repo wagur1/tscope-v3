@@ -1,0 +1,38 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Credentials & local secrets (NEVER commit)
+*pool*.json
+kaggle.json
+.kaggle/
+*.token
+.env
+.env.*
+
+# Local & downloaded outputs
+outputs/
+outputs_kaggle_pool/*
+!outputs_kaggle_pool/merged_benchmarks.json
+!outputs_kaggle_pool/sota_and_tracking_benchmarks.json
+!outputs_kaggle_pool/cross_backbone_bdbr.json
+!outputs_kaggle_pool/soup_connectivity_report.json
+outputs_kaggle_pool_full/
+outputs_kaggle_pool_poc/
+outputs_kaggle_disjoint/*.log
+
+# Datasets & raw media artifacts
+data/
+*.pt
+!release_ckpts/*.pt
+*.pth
+*.hevc
+*.264
+*.265
+*.mp4
+*.rgb
+*.yuv
+*.filter_script
+.DS_Store
