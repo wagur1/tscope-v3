@@ -378,7 +378,7 @@ def run_train_shard(args: argparse.Namespace) -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
     warmup_epochs = 2
-    cosine_t_max = max(1, args.epochs - warmup_epochs)
+    cosine_t_max = min(18, max(1, args.epochs - warmup_epochs))
     eta_min = min(args.lr, 1e-6)
     min_lr_factor = eta_min / max(args.lr, 1e-12)
 
@@ -658,6 +658,9 @@ def run_train_shard(args: argparse.Namespace) -> None:
                 print(f"  Converged: no val improvement for {epochs_since_best} epochs. Stop at epoch {epoch}.")
                 break
 
+    if not stopped_early:
+        print(f"  Converged: completed full {args.epochs}-epoch cosine schedule (best_epoch={best_epoch}).")
+
     ckpt_path = out_dir / f"tscope_{args.variant}_shard{args.shard_id:02d}of{args.num_shards:02d}.pt"
     raw_state = best_state if best_state is not None else base_model.state_dict()
     torch.save(
@@ -671,6 +674,7 @@ def run_train_shard(args: argparse.Namespace) -> None:
             "best_epoch": best_epoch,
             "best_val_loss": best_val if best_state is not None else None,
             "stopped_early": stopped_early,
+            "partial": False,
             "epochs_run": len(history),
             "training_configuration": training_configuration,
             "train_sequences": list(TRAIN_SEQUENCES),

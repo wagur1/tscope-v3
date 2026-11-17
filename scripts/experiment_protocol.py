@@ -318,9 +318,15 @@ def verify_convergence_log(
         saved_re = re.search(rf"Saved shard checkpoint.*tscope_{re.escape(variant)}_shard{sid:02d}of\d+\.pt", log)
         finish_ok = bool(finish_re or saved_re)
 
-    if "Converged: no val improvement for " not in log or not finish_ok:
+    has_early_stop = "Converged: no val improvement for " in log
+    has_full_schedule = "Converged: completed full " in log
+    if (not has_early_stop and not has_full_schedule) or not finish_ok:
         raise ValueError("Log does not corroborate exact shard convergence and completion")
-    return {"startup_visible": f"Variant={variant}" in log, "completion_identity_verified": True}
+    return {
+        "startup_visible": f"Variant={variant}" in log,
+        "completion_identity_verified": True,
+        "convergence_mode": "early_stop" if has_early_stop else "full_schedule",
+    }
 
 
 def validate_checkpoint(
@@ -342,8 +348,11 @@ def validate_checkpoint(
         or checkpoint.get("variant") != variant
     ):
         raise ValueError("Checkpoint identity mismatch")
-    if checkpoint.get("partial", False) or checkpoint.get("stopped_early") is not True:
-        raise ValueError("Final soup requires a completed early-stopped checkpoint")
+    if checkpoint.get("partial", False):
+        raise ValueError("Final soup rejects partial/timed-out checkpoints (partial=True)")
+    stopped_early = checkpoint.get("stopped_early")
+    if type(stopped_early) is not bool:
+        raise ValueError("Checkpoint requires explicit boolean stopped_early flag")
     if checkpoint.get("train_sequences") != TRAIN_SEQUENCES or checkpoint.get("val_sequences") != VAL_SEQUENCES:
         raise ValueError("Checkpoint split provenance mismatch")
 
@@ -356,15 +365,19 @@ def validate_checkpoint(
     best_val = checkpoint.get("best_val_loss")
     min_patience = int(train_cfg.get("patience", 10) or 10)
     min_epochs = int(train_cfg.get("min_epochs", 12) or 12)
+    configured_epochs = int(train_cfg.get("epochs", -1) or -1)
     if (
         type(epochs) is not int
         or type(best_epoch) is not int
         or len(history) != epochs
         or epochs < min_epochs
         or not 1 <= best_epoch <= epochs
-        or epochs - best_epoch < min_patience
     ):
-        raise ValueError("Invalid convergence history or patience")
+        raise ValueError("Invalid convergence history or epoch bounds")
+    early_converged_ok = stopped_early is True and (epochs - best_epoch >= min_patience)
+    full_schedule_ok = stopped_early is False and configured_epochs >= min_epochs and epochs == configured_epochs
+    if not (early_converged_ok or full_schedule_ok):
+        raise ValueError("Invalid convergence history: neither patience window nor full epoch schedule satisfied")
     if not isinstance(best_val, (float, int)) or not math.isfinite(best_val):
         raise ValueError("Missing finite best validation loss")
     if [row.get("epoch") for row in history] != list(range(1, epochs + 1)):

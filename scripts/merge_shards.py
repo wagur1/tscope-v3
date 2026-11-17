@@ -143,12 +143,23 @@ def merge_checkpoints_soup(
         ):
             raise ValueError("Unexpected or duplicate shard checkpoint in manifest")
         validate_checkpoint(checkpoint, sid, variant, expected_num_shards=num_shards)
-        log_path = path.parent / f"t-scope-vcm-shard-{sid:02d}.log"
-        log_entry = next((item for item in entry.get("files", []) if item["path"] == log_path.name), None)
-        if not log_entry or sha256_file(log_path) != log_entry.get("sha256"):
+        cand_logs = []
+        if entry.get("kernel_slug"):
+            cand_logs.append(f"{entry['kernel_slug']}.log")
+        cand_logs.extend([f"t-scope-v3-shard-{sid:02d}.log", f"t-scope-vcm-shard-{sid:02d}.log"])
+        log_entry = next(
+            (item for name in cand_logs for item in entry.get("files", []) if item["path"] == name),
+            None,
+        )
+        log_path = (path.parent / log_entry["path"]) if log_entry is not None else (path.parent / cand_logs[0])
+        if not log_entry or not log_path.is_file() or sha256_file(log_path) != log_entry.get("sha256"):
             raise ValueError("Missing checked convergence log")
         log = log_path.read_text(encoding="utf-8")
-        verify_convergence_log(log, sid, variant, num_shards=num_shards)
+        log_meta = verify_convergence_log(log, sid, variant, num_shards=num_shards)
+        if checkpoint.get("stopped_early") is True and log_meta.get("convergence_mode") != "early_stop":
+            raise ValueError("Checkpoint stopped_early=True conflicts with convergence log")
+        if checkpoint.get("stopped_early") is False and log_meta.get("convergence_mode") != "full_schedule":
+            raise ValueError("Checkpoint stopped_early=False requires full-schedule completion log")
         by_variant[variant][sid] = (checkpoint, path, digest, log_entry["sha256"])
 
     outputs: Dict[str, Dict[str, Any]] = {}

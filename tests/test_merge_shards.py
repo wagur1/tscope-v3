@@ -15,10 +15,13 @@ from scripts.experiment_protocol import (
     METRIC_POLICY,
     METHODS,
     SCHEMA_VERSION,
+    TRAIN_SEQUENCES,
+    VAL_SEQUENCES,
     VALIDATION_PROTOCOL,
     VARIANTS,
     restore_raw_detections,
     sha256_file,
+    validate_checkpoint,
     validate_release_validation,
     verify_convergence_log,
 )
@@ -97,9 +100,77 @@ class SoupPchipAndBootstrapTests(unittest.TestCase):
 
     def test_parameterized_convergence_log_identity(self):
         log = "Converged: no val improvement for 10 epochs. Stop at epoch 14.\n=== Shard 3/15 (full_tscope) finished successfully! ==="
-        self.assertFalse(verify_convergence_log(log, 3, "full_tscope", num_shards=15)["startup_visible"])
+        meta = verify_convergence_log(log, 3, "full_tscope", num_shards=15)
+        self.assertFalse(meta["startup_visible"])
+        self.assertEqual(meta["convergence_mode"], "early_stop")
+        full_log = "  Converged: completed full 28-epoch cosine schedule (best_epoch=26).\n=== Shard 0/15 (full_tscope) finished successfully! ==="
+        full_meta = verify_convergence_log(full_log, 0, "full_tscope", num_shards=15)
+        self.assertEqual(full_meta["convergence_mode"], "full_schedule")
         with self.assertRaises(ValueError):
             verify_convergence_log(log, 4, "full_tscope", num_shards=15)
+
+    def test_early_stopped_and_full_schedule_28ep_soup_merge_and_partial_rejection(self):
+        from models.temporal_scope import TemporalSCOPE
+
+        state = TemporalSCOPE(base_ch=48, num_families=2, cond_dim=64, qg_size=16, max_delta_qp=4.0).state_dict()
+        base_cfg = {"epochs": 28, "min_epochs": 10, "patience": 6, "use_yolov8s": False, "model": {"num_families": 2}}
+
+        # 1. Early-stopped at epoch 16 (best_epoch=10, patience=6) -> VALID
+        hist_early = [{"epoch": ep, "loss_total": 3.0 - 0.01 * ep, "val_loss": 2.5 if ep == 10 else 2.6} for ep in range(1, 17)]
+        ckpt_early = {
+            "shard_id": 0, "num_shards": 10, "variant": "full_tscope", "state_dict": state,
+            "history": hist_early, "best_epoch": 10, "best_val_loss": 2.5,
+            "stopped_early": True, "partial": False, "epochs_run": 16,
+            "training_configuration": base_cfg, "train_sequences": list(TRAIN_SEQUENCES), "val_sequences": list(VAL_SEQUENCES),
+        }
+        validate_checkpoint(ckpt_early, 0, "full_tscope", expected_num_shards=10)
+
+        # 2. Full 28-epoch cosine schedule (best_epoch=26, stopped_early=False, partial=False) -> VALID
+        hist_full = [{"epoch": ep, "loss_total": 3.0 - 0.01 * ep, "val_loss": 2.1 if ep == 26 else 2.4} for ep in range(1, 29)]
+        ckpt_full = {
+            "shard_id": 5, "num_shards": 10, "variant": "full_tscope", "state_dict": state,
+            "history": hist_full, "best_epoch": 26, "best_val_loss": 2.1,
+            "stopped_early": False, "partial": False, "epochs_run": 28,
+            "training_configuration": base_cfg, "train_sequences": list(TRAIN_SEQUENCES), "val_sequences": list(VAL_SEQUENCES),
+        }
+        validate_checkpoint(ckpt_full, 5, "full_tscope", expected_num_shards=10)
+
+        # 3. Partial checkpoint (partial=True) or truncated stopped_early=False (epochs_run=20 < 28) -> REJECTED
+        ckpt_partial = {**ckpt_full, "partial": True}
+        with self.assertRaisesRegex(ValueError, "partial"):
+            validate_checkpoint(ckpt_partial, 5, "full_tscope", expected_num_shards=10)
+        ckpt_trunc = {**ckpt_full, "history": hist_full[:20], "epochs_run": 20, "best_epoch": 18}
+        ckpt_trunc["history"][17]["val_loss"] = 2.1
+        with self.assertRaisesRegex(ValueError, "neither patience window nor full epoch schedule"):
+            validate_checkpoint(ckpt_trunc, 5, "full_tscope", expected_num_shards=10)
+
+        # 4. End-to-end merge_checkpoints_soup with v3 `t-scope-v3-shard-XX.log` filenames
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = {"schema_version": SCHEMA_VERSION, "expected_shards": 10, "shards": []}
+            for sid, ckpt, log_line in (
+                (0, ckpt_early, "  Converged: no val improvement for 6 epochs. Stop at epoch 16."),
+                (5, ckpt_full, "  Converged: completed full 28-epoch cosine schedule (best_epoch=26)."),
+            ):
+                sdir = root / f"shard_{sid:02d}"
+                sdir.mkdir()
+                pt_p = sdir / f"tscope_full_tscope_shard{sid:02d}of10.pt"
+                torch.save(ckpt, pt_p)
+                lg_p = sdir / f"t-scope-v3-shard-{sid:02d}.log"
+                lg_p.write_text(f"{log_line}\n=== Shard {sid}/10 (full_tscope) finished successfully! ===\n", encoding="utf-8")
+                manifest["shards"].append({
+                    "shard_id": sid, "kernel_slug": f"t-scope-v3-shard-{sid:02d}",
+                    "expected_variant": "full_tscope", "status": "COMPLETE", "downloaded": True,
+                    "directory": f"shard_{sid:02d}",
+                    "files": [
+                        {"path": pt_p.name, "bytes": pt_p.stat().st_size, "sha256": sha256_file(pt_p)},
+                        {"path": lg_p.name, "bytes": lg_p.stat().st_size, "sha256": sha256_file(lg_p)},
+                    ],
+                })
+            mpath = root / "collection_manifest.json"
+            mpath.write_text(json.dumps(manifest), encoding="utf-8")
+            out_soups = merge_checkpoints_soup(str(root / "soups"), "", str(mpath), variants=["full_tscope"])
+            self.assertTrue(Path(out_soups["full_tscope"]).is_file())
 
     def test_float_average_and_integer_preservation(self):
         result = average_compatible_states(
