@@ -172,7 +172,7 @@ class VCMTemporalPreEditLoss(nn.Module):
             warp_valid_mask = _cast(warp_valid_mask)
             eff_attn_map = _cast(eff_attn_map)
 
-            m_det_clamped = torch.clamp(m_det, 0.0, 1.0)
+            m_det_clamped = torch.nan_to_num(m_det, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
             m_bg = 1.0 - m_det_clamped
 
             # 1. Detector Feature Consistency Loss + Direct Foreground ROI Preservation
@@ -205,11 +205,16 @@ class VCMTemporalPreEditLoss(nn.Module):
                 loss_task = loss_task + loss_fg_pix + loss_fg_grad + loss_fg_recon
 
             # 2. High-Recall Attention Supervision + Foreground Saturation Hinge
+            m_attn_clean = torch.nan_to_num(m_attn, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
             halo4px = F.max_pool2d(
-                m_attn.view(b * t, 1, h, w), kernel_size=9, stride=1, padding=4
+                m_attn_clean.view(b * t, 1, h, w), kernel_size=9, stride=1, padding=4
             ).view(b, t, 1, h, w)
-            attn_fp32 = torch.clamp(attn_map.float(), 1e-6, 1.0 - 1e-6)
-            halo_fp32 = halo4px.float()
+            attn_fp32 = torch.nan_to_num(
+                attn_map.float(), nan=0.5, posinf=1.0 - 1e-6, neginf=1e-6
+            ).clamp(1e-6, 1.0 - 1e-6)
+            halo_fp32 = torch.nan_to_num(
+                halo4px.float(), nan=0.0, posinf=1.0, neginf=0.0
+            ).clamp(0.0, 1.0)
             det_fp32 = m_det_clamped.float()
             pixel_w = 1.0 + 4.0 * det_fp32 + 1.5 * (halo_fp32 - det_fp32).clamp_min(0.0)
             loss_bce = F.binary_cross_entropy(attn_fp32, halo_fp32, weight=pixel_w).to(dtype=calc_dtype)

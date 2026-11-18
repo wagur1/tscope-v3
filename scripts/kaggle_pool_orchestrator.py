@@ -670,6 +670,158 @@ def push_all_shards(args: argparse.Namespace, accounts: List[Tuple[str, str]]) -
     print(f"Saved credential-free dispatch map -> {state_file}")
 
 
+def repush_selected_shards(args: argparse.Namespace, accounts: List[Tuple[str, str]]) -> None:
+    """
+    Re-pushes only the specified logical `shard_id`(s) from `dispatch_<run_mode>.json`,
+    preserving exact `(shard_id, num_shards, account_index, variant, data_shard_id, data_num_shards)`
+    and updating per-shard `git_revision` without disturbing any other running/completed shards.
+    """
+    target_sids = list(dict.fromkeys(int(s) for s in (getattr(args, "repush_shards", None) or [])))
+    if not target_sids:
+        raise ValueError("--repush_shards requires at least one logical shard_id")
+
+    revision = _verify_local_git_and_soups_before_push(args)
+    out_dir = Path(args.output_dir).resolve()
+    state_file = (
+        Path(args.dispatch_map).resolve()
+        if getattr(args, "dispatch_map", "")
+        else _dispatch_state_path(out_dir, args.run_mode)
+    )
+    if not state_file.is_file():
+        raise FileNotFoundError(f"Dispatch state file required for --repush_shards not found: {state_file}")
+
+    payload: Dict[str, Any] = json.loads(state_file.read_text(encoding="utf-8"))
+    expected_shards = int(payload.get("expected_shards") or len(payload.get("assignments", [])))
+    assignments: List[Dict[str, Any]] = list(payload.get("assignments", []))
+    entry_by_sid: Dict[int, Dict[str, Any]] = {int(item["shard_id"]): item for item in assignments}
+
+    missing = [sid for sid in target_sids if sid not in entry_by_sid]
+    if missing:
+        raise ValueError(f"Requested --repush_shards {missing} not present in {state_file} (expected 0..{expected_shards - 1})")
+
+    account_overrides: Dict[int, int] = {}
+    for spec in getattr(args, "repush_account_overrides", None) or []:
+        for tok in str(spec).split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            sid_s, acc_s = tok.split(":", 1)
+            account_overrides[int(sid_s)] = int(acc_s)
+
+    dataset_sources = list(payload.get("dataset_sources") or _resolve_dataset_sources(args))
+    req_gpu_h = float(getattr(args, "repush_min_gpu_hours", 2.5))
+    print(
+        f"Re-pushing {len(target_sids)} logical shard(s) {target_sids} of {expected_shards} "
+        f"(mode={args.run_mode}, rev={revision[:12]}, min_gpu_hours={req_gpu_h:.2f}h)..."
+    )
+
+    repushed_count = 0
+    for sid in target_sids:
+        item = entry_by_sid[sid]
+        acc_idx = account_overrides.get(sid, int(item["account_index"]))
+        if not 0 <= acc_idx < len(accounts):
+            raise ValueError(f"Invalid account_index={acc_idx} for shard {sid}")
+        user, token = accounts[acc_idx]
+        variant = str(item["variant"])
+        data_shard_id = int(item.get("data_shard_id", -1))
+        data_num_shards = int(item.get("data_num_shards", -1))
+        slug = str(item.get("kernel_slug") or _kernel_slug_for_mode(args.run_mode, sid))
+        kernel_id = f"{user}/{slug}"
+        shard_sota_tasks = str(item.get("sota_tasks") or args.sota_tasks)
+        has_task_split = args.run_mode == "eval_sota_and_tracking" and bool(item.get("sota_tasks")) and bool(getattr(args, "sota_task_split", ""))
+        eff_num_shards_arg = 1 if has_task_split else expected_shards
+        eff_shard_id_arg = 0 if has_task_split else sid
+
+        api = get_authenticated_api(user, token)
+        q = api.quota_view()
+        used_h = q.gpu_quota.time_used.total_seconds() / 3600.0
+        tot_h = q.gpu_quota.total_time_allowed.total_seconds() / 3600.0
+        rem_h = max(0.0, tot_h - used_h)
+        if args.skip_exhausted and rem_h < req_gpu_h:
+            raise RuntimeError(
+                f"Account {acc_idx:02d} for Shard {sid:02d} has insufficient GPU quota ({rem_h:.2f}h < {req_gpu_h:.2f}h); "
+                f"pass --repush_account_overrides {sid}:<idle_account_idx> to re-home cleanly."
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            worker_code = build_worker_script(
+                shard_id=eff_shard_id_arg,
+                num_shards=eff_num_shards_arg,
+                variant=variant,
+                epochs=args.epochs,
+                batch_size=args.batch_size,
+                run_mode=args.run_mode,
+                git_revision=revision,
+                img_h=args.img_h,
+                img_w=args.img_w,
+                clip_len=args.clip_len,
+                gop_len=args.gop_len,
+                bframes=args.bframes,
+                data_shard_id=data_shard_id,
+                data_num_shards=data_num_shards,
+                patience=args.patience,
+                min_epochs=args.min_epochs,
+                lr=args.lr,
+                use_yolov8s=args.use_yolov8s,
+                grad_accum_steps=args.grad_accum_steps,
+                soup_subdir=args.soup_subdir,
+                sota_tasks=shard_sota_tasks,
+                eval_x264=not args.no_eval_x264,
+                eval_ra=not args.no_eval_ra,
+            )
+            (tmp_path / "worker.py").write_text(worker_code, encoding="utf-8")
+
+            metadata = {
+                "id": kernel_id,
+                "title": f"T-SCOPE v3 {args.run_mode.replace('_', ' ').title()} {sid:02d}",
+                "code_file": "worker.py",
+                "language": "python",
+                "kernel_type": "script",
+                "is_private": "true",
+                "enable_gpu": "true",
+                "enable_tpu": "false",
+                "enable_internet": "true",
+                "dataset_sources": dataset_sources,
+                "competition_sources": [],
+                "kernel_sources": [],
+                "model_sources": [],
+            }
+            (tmp_path / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+            res = api.kernels_push(str(tmp_path))
+            pushed_ref = str(getattr(res, "ref", "") or "").strip()
+            actual_slug = pushed_ref.split("/")[-1] if "/" in pushed_ref else slug
+            err_msg = _redact_secrets(getattr(res, "error", "") or "", (user, token))
+            if err_msg:
+                raise RuntimeError(f"Kaggle kernels_push error on Shard {sid:02d} (Account {acc_idx:02d}): {err_msg}")
+
+            now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            item["account_index"] = acc_idx
+            item["kernel_slug"] = actual_slug
+            item["git_revision"] = revision
+            item["repushed_at_utc"] = now_utc
+            payload.setdefault("repush_history", []).append(
+                {
+                    "shard_id": sid,
+                    "account_index": acc_idx,
+                    "kernel_slug": actual_slug,
+                    "git_revision": revision,
+                    "repushed_at_utc": now_utc,
+                }
+            )
+            repushed_count += 1
+            print(
+                f"  [Re-Pushed Shard {sid:02d}/{expected_shards:02d} -> Account {acc_idx:02d}] "
+                f"({rem_h:5.2f}h rem) | slug={actual_slug} | variant={variant:<18} "
+                f"(slice {data_shard_id + 1}/{data_num_shards}) | rev={revision[:12]}"
+            )
+            time.sleep(2.0)
+
+    state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"Updated dispatch map ({repushed_count} shard(s) re-pushed; all other shards untouched) -> {state_file}")
+
+
 def _load_assignments(args: argparse.Namespace, accounts: List[Tuple[str, str]]) -> Tuple[int, Optional[str], List[Dict[str, Any]]]:
     out_dir = Path(args.output_dir).resolve()
     state_file = Path(args.dispatch_map).resolve() if getattr(args, "dispatch_map", "") else _dispatch_state_path(out_dir, args.run_mode)
@@ -861,6 +1013,7 @@ def pull_and_merge_all(args: argparse.Namespace, accounts: List[Tuple[str, str]]
             "account_index": acc_idx,
             "kernel_slug": slug,
             "expected_variant": expected_variant,
+            "git_revision": item.get("git_revision") or git_revision,
             "downloaded": False,
         }
         try:
@@ -909,7 +1062,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--action",
-        choices=["verify_pool", "push", "status", "pull", "pull_and_merge"],
+        choices=["verify_pool", "push", "repush", "status", "pull", "pull_and_merge"],
         default="verify_pool",
     )
     parser.add_argument(
@@ -1030,6 +1183,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no_eval_x264", action="store_true", help="Skip libx264 pass in eval_cross_backbone")
     parser.add_argument("--no_eval_ra", action="store_true", help="Skip Random Access pass in eval_cross_backbone")
     parser.add_argument("--only_shards", type=int, nargs="+", default=None, help="Optional subset of pool account indices")
+    parser.add_argument(
+        "--repush_shards",
+        "--repush-shards",
+        dest="repush_shards",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Re-push specific logical shard_id(s) from dispatch_<run_mode>.json without touching other shards",
+    )
+    parser.add_argument(
+        "--repush_account_overrides",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Optional shard_id:account_index override(s) if a shard's original account exhausted GPU quota",
+    )
+    parser.add_argument(
+        "--repush_min_gpu_hours",
+        type=float,
+        default=2.5,
+        help="Minimum remaining GPU hours required when re-pushing individual shard(s)",
+    )
     parser.add_argument("--dispatch_map", type=str, default="", help="Optional path to dispatch_<mode>.json")
     parser.add_argument("--seed_manifest", type=str, default="", help="Optional prior collection_manifest.json")
     parser.add_argument("--output_dir", type=str, default="./outputs_kaggle_pool")
@@ -1041,7 +1216,9 @@ def main() -> None:
     args = parser.parse_args()
 
     accounts = load_account_pool(args.pool_file)
-    if args.action == "verify_pool":
+    if args.action == "repush" or (args.repush_shards and args.action in ("push", "verify_pool")):
+        repush_selected_shards(args, accounts)
+    elif args.action == "verify_pool":
         verify_pool(accounts, min_gpu_hours=args.min_gpu_hours)
     elif args.action == "push":
         push_all_shards(args, accounts)

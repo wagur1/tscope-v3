@@ -656,16 +656,22 @@ class TemporalSCOPE(nn.Module):
         d_attn_logit = ref_full[:, :1]
         d_obj_raw = ref_full[:, 1:]
 
-        # Promote newly disoccluded / fast-moving foreground while keeping warped foreground sharp
-        mot_promote = torch.clamp((motion_mag - 0.045) / 0.08, 0.0, 1.0)
-        base_prob = torch.clamp(torch.maximum(attn_prev_warped, 0.80 * mot_promote), 1e-4, 1.0 - 1e-4)
-        attn_logits = torch.logit(base_prob) + d_attn_logit
-        attn_t = torch.sigmoid(attn_logits)
+        # Promote newly disoccluded / fast-moving foreground while keeping warped foreground sharp.
+        # Compute logit/sigmoid fusion strictly in FP32 so `1.0 - 1e-4` never rounds to `1.0` in FP16
+        # (where `torch.logit(1.0) = +inf` and `SigmoidBackward * LogitBackward = 0 * inf = NaN`).
+        with torch.amp.autocast(device_type=i_t.device.type, enabled=False):
+            mot_promote = torch.clamp((motion_mag.float() - 0.045) / 0.08, 0.0, 1.0)
+            base_raw = torch.maximum(attn_prev_warped.float(), 0.80 * mot_promote)
+            base_prob = torch.nan_to_num(base_raw, nan=0.5, posinf=1.0 - 1e-4, neginf=1e-4).clamp(
+                1e-4, 1.0 - 1e-4
+            )
+            attn_logits_fp32 = torch.logit(base_prob) + d_attn_logit.float()
+            attn_t = torch.sigmoid(attn_logits_fp32).to(dtype=i_t.dtype)
 
-        u_sat = torch.clamp((attn_t - 0.12) / 0.46, 0.0, 1.0)
-        eff_hard = u_sat * u_sat * (3.0 - 2.0 * u_sat)
-        eff_proxy = torch.sigmoid(2.0 * (attn_logits + 0.65))
-        eff_attn_t = eff_proxy + (eff_hard - eff_proxy).detach()
+            u_sat = torch.clamp((attn_t.float() - 0.12) / 0.46, 0.0, 1.0)
+            eff_hard = (u_sat * u_sat * (3.0 - 2.0 * u_sat)).to(dtype=i_t.dtype)
+            eff_proxy = torch.sigmoid(2.0 * (attn_logits_fp32 + 0.65)).to(dtype=i_t.dtype)
+            eff_attn_t = eff_proxy + (eff_hard - eff_proxy).detach()
 
         s_gate = 1.0 if sev_gate is None else sev_gate
         delta_obj_t = (self.max_obj_res * s_gate) * eff_attn_t * torch.tanh(d_obj_raw)

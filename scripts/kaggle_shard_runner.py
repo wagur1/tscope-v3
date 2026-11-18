@@ -313,6 +313,92 @@ def _extract_valid_track_ids(
     return per_frame_ids
 
 
+def _is_batch_output_finite(out: Dict[str, Any], losses: Dict[str, torch.Tensor]) -> bool:
+    """Checks whether forward outputs and total loss are completely finite."""
+    if not bool(torch.isfinite(losses["loss_total"]).item()):
+        return False
+    for key in ("i_edit", "attn_map", "delta_obj", "delta_bg", "ctu_qp_offsets"):
+        val = out.get(key)
+        if isinstance(val, torch.Tensor) and not bool(torch.isfinite(val).all().item()):
+            return False
+    return True
+
+
+def _run_train_batch_forward_with_fp32_fallback(
+    *,
+    model: torch.nn.Module,
+    codec_ste: Any,
+    fpn_teacher: Any,
+    criterion: torch.nn.Module,
+    video: torch.Tensor,
+    m_attn: torch.Tensor,
+    m_det: torch.Tensor,
+    family_id: torch.Tensor,
+    severity: torch.Tensor,
+    preset_cfg: Dict[str, Any],
+    use_amp: bool,
+) -> Tuple[Dict[str, Any], Dict[str, torch.Tensor], bool]:
+    """
+    Runs a training batch forward + loss under FP16 `autocast` when `use_amp=True`.
+    If an FP16 overflow produces any non-finite value in `losses["loss_total"]` or `out`,
+    immediately discards the overflowed graph and re-computes the batch in full FP32
+    (`torch.amp.autocast("cuda", enabled=False)`) so loss, gradients, and `history` stay 100% finite.
+    """
+    b, t, _, h, w = video.shape
+    i_clean_flat = video.view(b * t, 3, h, w)
+
+    def _single_pass(amp_enabled: bool) -> Tuple[Dict[str, Any], Dict[str, torch.Tensor]]:
+        amp_ctx = (
+            torch.amp.autocast("cuda", enabled=amp_enabled)
+            if video.device.type == "cuda"
+            else torch.amp.autocast("cpu", dtype=torch.bfloat16, enabled=amp_enabled)
+        )
+        with amp_ctx:
+            out_d = model(
+                video,
+                family_id,
+                severity,
+                reuse_iframe_qp=preset_cfg["reuse_iframe_qp"],
+                disable_temporal=preset_cfg["disable_temporal"],
+            )
+            qp_ste = out_d["ctu_qp_offsets"] if preset_cfg["max_delta_qp"] > 0 else None
+            codec_out = _call_codec_ste(codec_ste, out_d["i_edit"], severity, qp_ste, family_id=family_id)
+            i_recon_flat = codec_out["video_recon"].view(b * t, 3, h, w)
+            with torch.no_grad():
+                teacher_fpn = fpn_teacher.extract_fpn_features(i_clean_flat)
+            student_fpn = fpn_teacher.extract_fpn_features(i_recon_flat)
+            loss_d = _call_criterion(
+                criterion,
+                i_edit=out_d["i_edit"],
+                i_recon=codec_out["video_recon"],
+                attn_map=out_d["attn_map"],
+                eff_attn_map=out_d.get("eff_attn_map"),
+                delta_obj=out_d["delta_obj"],
+                delta_bg=out_d["delta_bg"],
+                rate_proxy_bpp=codec_out["rate_proxy_bpp"],
+                m_attn=m_attn,
+                m_det=m_det,
+                teacher_fpn_feats=teacher_fpn,
+                student_fpn_feats=student_fpn,
+                i_frame_bpp_proxy=codec_out.get("i_frame_bpp_proxy"),
+                p_frame_bpp_proxy=codec_out.get("p_frame_bpp_proxy"),
+                ctu_qp_offsets=out_d.get("ctu_qp_offsets"),
+                i_orig=video,
+                aligned_prev_edit=out_d.get("aligned_prev_edit"),
+                aligned_prev_orig=out_d.get("aligned_prev_orig"),
+                warp_valid_mask=out_d.get("warp_valid_mask"),
+            )
+        return out_d, loss_d
+
+    out, losses = _single_pass(amp_enabled=use_amp)
+    used_fp32_fallback = False
+    if use_amp and not _is_batch_output_finite(out, losses):
+        del out, losses
+        out, losses = _single_pass(amp_enabled=False)
+        used_fp32_fallback = True
+    return out, losses, used_fp32_fallback
+
+
 def run_train_shard(args: argparse.Namespace) -> None:
     if getattr(args, "use_yolov8s", False):
         raise ValueError(
@@ -537,6 +623,7 @@ def run_train_shard(args: argparse.Namespace) -> None:
     for epoch in range(1, args.epochs + 1):
         model.train()
         epoch_loss = 0.0
+        finite_batches = 0
         t0 = time.perf_counter()
 
         optimizer.zero_grad(set_to_none=True)
@@ -544,7 +631,7 @@ def run_train_shard(args: argparse.Namespace) -> None:
             video = batch["video"].to(device)
             m_attn = batch["m_attn"].to(device)
             m_det = batch["m_det"].to(device)
-            b, t, _, h, w = video.shape
+            b = video.shape[0]
 
             # Alternate/sample across family_id=0 (libx265) and family_id=1 (libx264) (F10 fix).
             if train_multi_codec:
@@ -559,46 +646,30 @@ def run_train_shard(args: argparse.Namespace) -> None:
             # Sample severity densely across [0.15, 0.90] (QP ~25.75..44.5, covering CRFs 27..42).
             severity = 0.15 + 0.75 * torch.rand((b,), device=device, dtype=torch.float32)
 
-            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
-                out = model(
-                    video,
-                    family_id,
-                    severity,
-                    reuse_iframe_qp=preset_cfg["reuse_iframe_qp"],
-                    disable_temporal=preset_cfg["disable_temporal"],
+            out, losses, used_fp32 = _run_train_batch_forward_with_fp32_fallback(
+                model=model,
+                codec_ste=codec_ste,
+                fpn_teacher=fpn_teacher,
+                criterion=criterion,
+                video=video,
+                m_attn=m_attn,
+                m_det=m_det,
+                family_id=family_id,
+                severity=severity,
+                preset_cfg=preset_cfg,
+                use_amp=(device.type == "cuda"),
+            )
+            if used_fp32:
+                print(
+                    f"    [AMP->FP32 fallback] epoch {epoch:02d} step {step_idx:04d}: "
+                    f"recovered finite loss={float(losses['loss_total'].item()):.4f}"
                 )
-                qp_ste = out["ctu_qp_offsets"] if preset_cfg["max_delta_qp"] > 0 else None
-                codec_out = _call_codec_ste(codec_ste, out["i_edit"], severity, qp_ste, family_id=family_id)
+            if not _is_batch_output_finite(out, losses):
+                print(f"    [WARN] Skipping non-finite batch at epoch {epoch:02d} step {step_idx:04d} even in FP32")
+                optimizer.zero_grad(set_to_none=True)
+                continue
 
-                i_clean_flat = video.view(b * t, 3, h, w)
-                i_recon_flat = codec_out["video_recon"].view(b * t, 3, h, w)
-                with torch.no_grad():
-                    teacher_fpn = fpn_teacher.extract_fpn_features(i_clean_flat)
-                student_fpn = fpn_teacher.extract_fpn_features(i_recon_flat)
-
-                losses = _call_criterion(
-                    criterion,
-                    i_edit=out["i_edit"],
-                    i_recon=codec_out["video_recon"],
-                    attn_map=out["attn_map"],
-                    eff_attn_map=out.get("eff_attn_map"),
-                    delta_obj=out["delta_obj"],
-                    delta_bg=out["delta_bg"],
-                    rate_proxy_bpp=codec_out["rate_proxy_bpp"],
-                    m_attn=m_attn,
-                    m_det=m_det,
-                    teacher_fpn_feats=teacher_fpn,
-                    student_fpn_feats=student_fpn,
-                    i_frame_bpp_proxy=codec_out.get("i_frame_bpp_proxy"),
-                    p_frame_bpp_proxy=codec_out.get("p_frame_bpp_proxy"),
-                    ctu_qp_offsets=out.get("ctu_qp_offsets"),
-                    i_orig=video,
-                    aligned_prev_edit=out.get("aligned_prev_edit"),
-                    aligned_prev_orig=out.get("aligned_prev_orig"),
-                    warp_valid_mask=out.get("warp_valid_mask"),
-                )
-                loss_scaled = losses["loss_total"] / grad_accum_steps
-
+            loss_scaled = losses["loss_total"] / grad_accum_steps
             scaler.scale(loss_scaled).backward()
             if (step_idx + 1) % grad_accum_steps == 0 or (step_idx + 1) == len(loader):
                 scaler.unscale_(optimizer)
@@ -607,6 +678,7 @@ def run_train_shard(args: argparse.Namespace) -> None:
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
             epoch_loss += float(losses["loss_total"].item())
+            finite_batches += 1
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
@@ -614,7 +686,7 @@ def run_train_shard(args: argparse.Namespace) -> None:
         epoch_lr = optimizer.param_groups[0]["lr"]
         scheduler.step()
 
-        avg_loss = epoch_loss / max(1, len(loader))
+        avg_loss = epoch_loss / max(1, finite_batches)
         dt = time.perf_counter() - t0
         print(
             f"  Epoch {epoch:02d}/{args.epochs:02d} | Loss={avg_loss:.4f} | LR={epoch_lr:.2e} | Time={dt:.1f}s"

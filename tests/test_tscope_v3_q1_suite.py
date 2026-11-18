@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from losses.vcm_temporal_loss import VCMTemporalPreEditLoss
+from models.frozen_detector_fpn import FrozenFPNDetectorTeacher
 from models.temporal_scope import TemporalSCOPE
 from scripts.eval_sota_and_tracking import (
     ByteTrackerKalman,
@@ -19,11 +21,13 @@ from scripts.eval_sota_and_tracking import (
     compute_multiclass_dataset_coco_metrics,
 )
 from scripts.kaggle_pool_orchestrator import SUPPORTED_RUN_MODES, build_worker_script
+from scripts.kaggle_shard_runner import ABLATION_PRESETS, _run_train_batch_forward_with_fp32_fallback
 from scripts.run_rigor_gate0_gate1_pilot import (
     build_anti_aligned_dqp,
     build_spatially_shuffled_dqp,
     evaluate_gate0_4_conjunctive,
 )
+from video_codecs.hybrid_x265_ste import HybridX265STE
 
 
 class Gate04ConjunctiveFalsificationTests(unittest.TestCase):
@@ -168,6 +172,114 @@ class FlopBypassAndCliAlignmentTests(unittest.TestCase):
                 git_revision=dummy_sha,
             )
             ast.parse(code)
+
+
+class AmpOverflowAndBceSafetyTests(unittest.TestCase):
+    def test_bce_nan_inf_sanitization_and_amp_fp32_batch_fallback(self):
+        criterion = VCMTemporalPreEditLoss()
+        b, t, h, w = 1, 2, 64, 64
+        video = torch.rand(b, t, 3, h, w)
+        m_attn = torch.zeros(b, t, 1, h, w)
+        m_attn[:, :, :, 16:32, 16:32] = 1.0
+        m_det = m_attn.clone()
+
+        # 1) Inject NaN/+Inf/-Inf in attn_map (reproducing Shard 03's FP16 overflow into BCE):
+        #    Must NOT raise RuntimeError / CUDA Loss.cu assert in F.binary_cross_entropy!
+        bad_attn = torch.full((b, t, 1, h, w), 0.5, requires_grad=True)
+        bad_attn_poisoned = bad_attn.clone()
+        bad_attn_poisoned.data[0, 0, 0, 0, 0] = float("nan")
+        bad_attn_poisoned.data[0, 0, 0, 0, 1] = float("inf")
+        bad_attn_poisoned.data[0, 0, 0, 0, 2] = float("-inf")
+        dummy_feats = {"0": torch.randn(b * t, 16, h // 4, w // 4)}
+        loss_poisoned = criterion(
+            i_edit=video.clone(),
+            i_recon=video.clone(),
+            attn_map=bad_attn_poisoned,
+            delta_obj=torch.zeros_like(video),
+            delta_bg=torch.zeros_like(video),
+            rate_proxy_bpp=torch.tensor([0.12]),
+            m_attn=m_attn,
+            m_det=m_det,
+            teacher_fpn_feats=dummy_feats,
+            student_fpn_feats={k: v.clone().requires_grad_(True) for k, v in dummy_feats.items()},
+            i_orig=video,
+        )
+        # BCE stayed safe (no assert), while loss_total cleanly flags non-finite for FP32 retry!
+        self.assertFalse(bool(torch.isfinite(loss_poisoned["loss_total"]).item()))
+
+        # 2) Verify `_run_train_batch_forward_with_fp32_fallback` catches autocast NaN overflow
+        #    and re-computes the batch in full FP32 (`autocast(enabled=False)`), yielding 100% finite
+        #    loss and finite gradients across all learnable parameters.
+        base_model = TemporalSCOPE(base_ch=16, num_families=2, cond_dim=32, qg_size=16, max_delta_qp=4.0)
+        codec_ste = HybridX265STE(use_real_x265_in_forward=False)
+        fpn_teacher = FrozenFPNDetectorTeacher(pretrained=False, use_yolov8s=False)
+
+        class _AutocastOverflowWrapper(torch.nn.Module):
+            def __init__(self, inner: torch.nn.Module) -> None:
+                super().__init__()
+                self.inner = inner
+                self.calls = 0
+
+            def forward(self, v, fam, sev, **kwargs):
+                self.calls += 1
+                out_d = self.inner(v, fam, sev, **kwargs)
+                if torch.is_autocast_enabled(v.device.type):
+                    poison = out_d["attn_map"].clone()
+                    poison[:, 0, 0, 0, 0] = float("nan")
+                    out_d = dict(out_d)
+                    out_d["attn_map"] = poison
+                return out_d
+
+        wrapped = _AutocastOverflowWrapper(base_model)
+        fam = torch.tensor([0], dtype=torch.long)
+        sev = torch.tensor([0.5], dtype=torch.float32)
+        out_ok, losses_ok, used_fp32 = _run_train_batch_forward_with_fp32_fallback(
+            model=wrapped,
+            codec_ste=codec_ste,
+            fpn_teacher=fpn_teacher,
+            criterion=criterion,
+            video=video,
+            m_attn=m_attn,
+            m_det=m_det,
+            family_id=fam,
+            severity=sev,
+            preset_cfg=ABLATION_PRESETS["iwa_gop_qp_reuse"],
+            use_amp=True,
+        )
+        self.assertTrue(used_fp32)
+        self.assertEqual(wrapped.calls, 2)
+        self.assertTrue(bool(torch.isfinite(losses_ok["loss_total"]).item()))
+        self.assertTrue(bool(torch.isfinite(out_ok["attn_map"]).all().item()))
+        losses_ok["loss_total"].backward()
+        grad_Params = [p.grad for p in base_model.parameters() if p.grad is not None]
+        self.assertGreater(len(grad_Params), 0)
+        self.assertTrue(all(bool(torch.isfinite(g).all().item()) for g in grad_Params))
+
+        # 3) Verify `forward_inter_bypass_step` in FP16 with saturated `attn_prev_warped = 0.9999`
+        #    (which rounds to 1.0 in float16) produces 100% finite forward outputs AND finite gradients!
+        fp16_model = TemporalSCOPE(base_ch=16, num_families=2, cond_dim=32, qg_size=16, max_delta_qp=4.0).half()
+        i_t_16 = torch.rand(1, 3, 32, 32, dtype=torch.float16, requires_grad=True)
+        i_prev_16 = torch.rand(1, 3, 32, 32, dtype=torch.float16)
+        c_16 = torch.randn(1, 32, dtype=torch.float16, requires_grad=True)
+        attn_prev_16 = torch.full((1, 1, 32, 32), 0.9999, dtype=torch.float16, requires_grad=True)
+        eff_prev_16 = torch.ones(1, 1, 32, 32, dtype=torch.float16, requires_grad=True)
+        bg_prev_16 = torch.rand(1, 3, 32, 32, dtype=torch.float16, requires_grad=True)
+        i_ed_16, attn_16, eff_16, dobj_16, dbg_16, bg_16 = fp16_model.forward_inter_bypass_step(
+            i_t_16, i_prev_16, c_16, attn_prev_16, eff_prev_16, bg_prev_16
+        )
+        for ten in (i_ed_16, attn_16, eff_16, dobj_16, dbg_16, bg_16):
+            self.assertEqual(ten.dtype, torch.float16)
+            self.assertTrue(bool(torch.isfinite(ten).all().item()))
+        (i_ed_16.float().mean() + attn_16.float().mean() + eff_16.float().mean()).backward()
+        self.assertIsNotNone(attn_prev_16.grad)
+        self.assertTrue(bool(torch.isfinite(attn_prev_16.grad).all().item()))
+        self.assertTrue(
+            all(
+                bool(torch.isfinite(p.grad).all().item())
+                for p in fp16_model.inter_refine.parameters()
+                if p.grad is not None
+            )
+        )
 
 
 if __name__ == "__main__":
