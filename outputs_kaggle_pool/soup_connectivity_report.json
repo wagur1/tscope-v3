@@ -1,0 +1,139 @@
+{
+  "schema_version": 3,
+  "split": "MOT17-09",
+  "held_out_test_used": false,
+  "protocol": {
+    "full_clips": 131,
+    "val_subsample": 2,
+    "batch_size": 4,
+    "severities": [
+      0.2,
+      0.6
+    ],
+    "img_h": 384,
+    "img_w": 640,
+    "clip_len": 4,
+    "uniform_codec": "libx265_real_ste_yuv420p",
+    "teacher": "fasterrcnn_resnet50_fpn_v2_single_teacher",
+    "aggregation": "uniform_real_x265_criterion_plus_constituent_connectivity",
+    "held_out_test_used": false
+  },
+  "variants": {
+    "full_tscope": {
+      "uniform_soup_loss_total": 3.7816091775894165,
+      "native_preset_loss_total": 3.7816091775894165,
+      "constituent_Stopping_losses": [
+        3.9640954943264233,
+        3.996945149758283,
+        3.831446640631732
+      ],
+      "constituent_uniform_losses": {
+        "0": 3.964095438227934,
+        "5": 3.9969450445736157,
+        "10": 3.8314465985578647
+      },
+      "constituent_uniform_loss_mean": 3.9308290271198048,
+      "constituent_uniform_loss_std": 0.08762091353905412,
+      "greedy_soup_loss_total": 3.7816091775894165,
+      "greedy_selected_shard_ids": [
+        10,
+        0,
+        5
+      ],
+      "linear_mode_connected": true,
+      "selected_mode": "uniform_soup_no_test_selection"
+    },
+    "wo_ctu_delta_qp": {
+      "uniform_soup_loss_total": 3.7604983624290016,
+      "native_preset_loss_total": 3.7604983624290016,
+      "constituent_Stopping_losses": [
+        3.8216245104284847,
+        3.835369348526001,
+        3.8063258633894077
+      ],
+      "constituent_uniform_losses": {
+        "1": 3.8216244543299958,
+        "6": 3.835369285415201,
+        "11": 3.8063258283278523
+      },
+      "constituent_uniform_loss_mean": 3.821106522691016,
+      "constituent_uniform_loss_std": 0.01452865409400184,
+      "greedy_soup_loss_total": 3.727233087315279,
+      "greedy_selected_shard_ids": [
+        11,
+        1
+      ],
+      "linear_mode_connected": true,
+      "selected_mode": "uniform_soup_no_test_selection"
+    },
+    "spatial_only_scope": {
+      "uniform_soup_loss_total": 3.9919682881411385,
+      "native_preset_loss_total": 3.8743471327949974,
+      "constituent_Stopping_losses": [
+        3.843066327712115,
+        3.972625795532675,
+        3.7847892606959626
+      ],
+      "constituent_uniform_losses": {
+        "2": 3.952476010603063,
+        "7": 4.082315395860111,
+        "12": 3.8932558718849632
+      },
+      "constituent_uniform_loss_mean": 3.9760157594493797,
+      "constituent_uniform_loss_std": 0.09670297685820288,
+      "greedy_soup_loss_total": 3.8932558718849632,
+      "greedy_selected_shard_ids": [
+        12
+      ],
+      "linear_mode_connected": false,
+      "selected_mode": "uniform_soup_no_test_selection"
+    },
+    "iwa_gop_qp_reuse": {
+      "uniform_soup_loss_total": 3.8311873464023365,
+      "native_preset_loss_total": 3.8311873464023365,
+      "constituent_Stopping_losses": [
+        4.035250383264878,
+        3.899855038698982,
+        3.9512825713438144
+      ],
+      "constituent_uniform_losses": {
+        "3": 4.035250355215633,
+        "8": 3.899855010649737,
+        "13": 3.9512824871960808
+      },
+      "constituent_uniform_loss_mean": 3.9621292843538165,
+      "constituent_uniform_loss_std": 0.06834628438302441,
+      "greedy_soup_loss_total": 3.8050871035631966,
+      "greedy_selected_shard_ids": [
+        8,
+        13
+      ],
+      "linear_mode_connected": true,
+      "selected_mode": "uniform_soup_no_test_selection"
+    },
+    "wo_x265_ste_proxy": {
+      "uniform_soup_loss_total": 3.700960201375625,
+      "native_preset_loss_total": 2.863908115555258,
+      "constituent_Stopping_losses": [
+        2.8930200688979206,
+        3.0532163732192097,
+        3.108378494487089
+      ],
+      "constituent_uniform_losses": {
+        "4": 3.7166196668849274,
+        "9": 3.8728253350538364,
+        "14": 3.925578271641451
+      },
+      "constituent_uniform_loss_mean": 3.8383410911934046,
+      "constituent_uniform_loss_std": 0.1086636872714042,
+      "greedy_soup_loss_total": 3.700960201375625,
+      "greedy_selected_shard_ids": [
+        4,
+        9,
+        14
+      ],
+      "linear_mode_connected": true,
+      "selected_mode": "uniform_soup_no_test_selection"
+    }
+  }
+}
