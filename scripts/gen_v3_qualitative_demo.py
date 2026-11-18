@@ -313,7 +313,7 @@ def main() -> None:
         "T-SCOPE Full + Det",
     ]
     n_rows = len(panel_rows)
-    fig, axes = plt.subplots(n_rows, 6, figsize=(16.5, 3.0 * n_rows), constrained_layout=True)
+    fig, axes = plt.subplots(n_rows, 6, figsize=(16.5, 2.05 * n_rows), constrained_layout=True)
     if n_rows == 1:
         axes = np.expand_dims(axes, axis=0)
     for r_i, row in enumerate(panel_rows):
@@ -329,8 +329,8 @@ def main() -> None:
             if c_i == 4:
                 ax.set_xlabel(f"{row['anc_bpp']:.4f} bpp | det={row['anc_cnt']}", fontsize=9)
             elif c_i == 5:
-                save_pct = (1.0 - row["full_bpp"] / max(row["anc_bpp"], 1e-9)) * 100.0
-                ax.set_xlabel(f"{row['full_bpp']:.4f} bpp (-{save_pct:.1f}%) | det={row['full_cnt']}", fontsize=9, fontweight="bold")
+                delta_pct = (row["full_bpp"] / max(row["anc_bpp"], 1e-9) - 1.0) * 100.0
+                ax.set_xlabel(f"{row['full_bpp']:.4f} bpp ({delta_pct:+.1f}%) | det={row['full_cnt']}", fontsize=9, fontweight="bold")
 
     fig.savefig(out_dir / "fig_qualitative_v3.pdf", bbox_inches="tight")
     fig.savefig(out_dir / "fig_qualitative_v3.png", dpi=220, bbox_inches="tight")
