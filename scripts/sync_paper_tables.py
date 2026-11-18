@@ -747,13 +747,16 @@ def render_tables_generated_tex(
     ]
     for m_key, m_lbl, is_b in trk_methods:
         te = trk.get(m_key, {})
-        q27 = te.get("per_qp", {}).get("27", {})
-        mota_27 = _fmt_num(q27.get("mota_pct"), digits=2, tex=True)
-        hota_27 = _fmt_num(q27.get("hota_pct"), digits=2, tex=True)
-        idsw_27 = str(int(q27["idsw"])) if isinstance(q27.get("idsw"), int) else r"\texttt{TBD}"
-        b_mota = _fmt_pct(te.get("bdbr_tot_mota_pct"), tex=True)
-        b_idf1 = _fmt_pct(te.get("bdbr_tot_idf1_pct"), tex=True)
-        b_hota = _fmt_pct(te.get("bdbr_tot_hota_pct"), tex=True)
+        if trk and not te:
+            mota_27 = hota_27 = idsw_27 = b_mota = b_idf1 = b_hota = "--"
+        else:
+            q27 = te.get("per_qp", {}).get("27", {})
+            mota_27 = _fmt_num(q27.get("mota_pct"), digits=2, tex=True)
+            hota_27 = _fmt_num(q27.get("hota_pct"), digits=2, tex=True)
+            idsw_27 = str(int(q27["idsw"])) if isinstance(q27.get("idsw"), int) else r"\texttt{TBD}"
+            b_mota = _fmt_pct(te.get("bdbr_tot_mota_pct"), tex=True)
+            b_idf1 = _fmt_pct(te.get("bdbr_tot_idf1_pct"), tex=True)
+            b_hota = _fmt_pct(te.get("bdbr_tot_hota_pct"), tex=True)
         m20_e = sec.get("mot20", {}).get("methods", {}).get(m_key, {})
         kit_e = sec.get("kitti", {}).get("methods", {}).get(m_key, {})
         b_m20 = _fmt_pct(m20_e.get("bdbr_tot_map50_pct"), tex=True) if m_key in ("anchor_x265", "tscope_spatial_only", "tscope_iwa_gop_qp_reuse", "tscope_full") else "--"

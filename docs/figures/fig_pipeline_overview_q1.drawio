@@ -1,0 +1,235 @@
+<mxfile host="app.diagrams.net" modified="2026-11-18T16:46:00.000Z" agent="T-SCOPE-v3" version="24.7.17" type="device">
+  <diagram id="tscope-q1-pipeline" name="T-SCOPE Q1 Pipeline">
+    <mxGraphModel dx="1320" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="520" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Stage 1: Align & Condition -->
+        <mxCell id="s1_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F4F7FA;strokeColor=#3B6E9C;strokeWidth=1.8;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="16" y="16" width="196" height="396" as="geometry" />
+        </mxCell>
+        <mxCell id="s1_hdr" value="1. Align &amp;amp; Condition" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2C5282;strokeColor=#2C5282;fontColor=#FFFFFF;fontStyle=1;fontSize=12;fontFamily=Helvetica;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="24" y="24" width="180" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s1_in" value="&lt;b&gt;Video GOP {I&lt;sub&gt;t&lt;/sub&gt;}&lt;/b&gt;&lt;br&gt;3×384×640, T=32" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4A7BA7;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="32" y="72" width="164" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="s1_mc" value="&lt;b&gt;6-DOF Cauchy-IRLS&lt;/b&gt;&lt;br&gt;Static Snap &amp;amp; Coring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4A7BA7;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="32" y="164" width="164" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="s1_cond" value="&lt;b&gt;SeverityConditioner&lt;/b&gt;&lt;br&gt;Codec (x265 / x264) + s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6D4AFF;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="32" y="276" width="164" height="68" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 2: TemporalSCOPE Pre-Editor -->
+        <mxCell id="s2_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F2FAF6;strokeColor=#1B7F5C;strokeWidth=1.8;arcSize=4;" vertex="1" parent="1">
+          <mxGeometry x="246" y="16" width="380" height="396" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_hdr" value="2. TemporalSCOPE Pre-Editor (6.11M)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#166534;strokeColor=#166534;fontColor=#FFFFFF;fontStyle=1;fontSize=12;fontFamily=Helvetica;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="254" y="24" width="364" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_full_box" value="&lt;b&gt;Full Mode (137.8 GMACs/f)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#FFFFFF;strokeColor=#2F855A;strokeWidth=1.4;fontSize=10.5;fontFamily=Helvetica;spacingTop=4;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="260" y="66" width="352" height="106" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_enc" value="&lt;b&gt;FiLM&lt;br&gt;Encoder&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDF7F1;strokeColor=#2F855A;strokeWidth=1.3;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="272" y="96" width="96" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_gru" value="&lt;b&gt;Warped&lt;br&gt;ConvGRU&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDF7F1;strokeColor=#2F855A;strokeWidth=1.3;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="388" y="96" width="96" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_dec" value="&lt;b&gt;FiLM&lt;br&gt;Decoder&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDF7F1;strokeColor=#2F855A;strokeWidth=1.3;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="504" y="96" width="96" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_iwa" value="&lt;b&gt;Fast Mode: IWA Inter-Bypass&lt;/b&gt;&lt;br&gt;t mod 32 ≠ 0 (−96.7% GMACs, 113.2 FPS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F7F7;strokeColor=#0D9488;strokeWidth=1.6;dashed=1;dashPattern=6 3;fontSize=10.5;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="260" y="186" width="352" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_syn_box" value="&lt;b&gt;Dual-Branch Pixel Synthesis&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#FFFDF7;strokeColor=#C77718;strokeWidth=1.4;fontSize=10.5;fontFamily=Helvetica;spacingTop=4;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="260" y="258" width="352" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_fg" value="&lt;b&gt;Foreground STE&lt;/b&gt;&lt;br&gt;Smoothstep A&lt;sub&gt;t&lt;/sub&gt;&lt;sup&gt;eff&lt;/sup&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=1.3;fontSize=10.5;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="272" y="286" width="156" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_bg_ema" value="&lt;b&gt;Motion-Locked BG&lt;/b&gt;&lt;br&gt;Adaptive Blur + EMA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=1.3;fontSize=10.5;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="444" y="286" width="156" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="s2_mix" value="&lt;b&gt;Blended Output I&lt;sub&gt;edit,t&lt;/sub&gt;&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDE68A;strokeColor=#B45309;strokeWidth=1.3;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="272" y="348" width="328" height="38" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 3: Halo-Guarded QG dQP -->
+        <mxCell id="s3_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9F0;strokeColor=#C77718;strokeWidth=1.8;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="16" width="184" height="396" as="geometry" />
+        </mxCell>
+        <mxCell id="s3_hdr" value="3. Halo-Guarded QG" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B45309;strokeColor=#B45309;fontColor=#FFFFFF;fontStyle=1;fontSize=12;fontFamily=Helvetica;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="668" y="24" width="168" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s3_halo" value="&lt;b&gt;3×3 FG Halo Guard&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D97706;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="676" y="74" width="152" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="s3_pool" value="&lt;b&gt;16×16 QG Pool&lt;/b&gt;&lt;br&gt;40×24 Grid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D97706;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="676" y="156" width="152" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="s3_dqp" value="&lt;b&gt;Non-Negative ΔQP&lt;/b&gt;&lt;br&gt;FG=0, BG∈[0,+7.14]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D97706;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="676" y="244" width="152" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="s3_addroi" value="&lt;b&gt;P-Carry &amp;amp; addroi&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.4;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="676" y="332" width="152" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 4: Multi-Codec & Hybrid STE -->
+        <mxCell id="s4_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F6F7F9;strokeColor=#475569;strokeWidth=1.8;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="876" y="16" width="184" height="396" as="geometry" />
+        </mxCell>
+        <mxCell id="s4_hdr" value="4. Multi-Codec &amp;amp; STE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;fontColor=#FFFFFF;fontStyle=1;fontSize=12;fontFamily=Helvetica;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="884" y="24" width="168" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s4_fwd" value="&lt;b&gt;Standard 4:2:0 Codec&lt;/b&gt;&lt;br&gt;libx265 / libx264&lt;br&gt;GOP=32 (LDP &amp;amp; RA)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#334155;strokeWidth=1.5;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="892" y="84" width="152" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="s4_px" value="&lt;b&gt;Differentiable Proxy&lt;/b&gt;&lt;br&gt;8×8 DCT + 16×16 MC&lt;br&gt;(Backward STE)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF1F2;strokeColor=#BE123C;strokeWidth=1.5;dashed=1;dashPattern=6 3;fontSize=11;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="892" y="268" width="152" height="104" as="geometry" />
+        </mxCell>
+
+        <!-- Stage 5: Train vs. Zero-Shot -->
+        <mxCell id="s5_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F6F4FF;strokeColor=#6D4AFF;strokeWidth=1.8;arcSize=6;" vertex="1" parent="1">
+          <mxGeometry x="1092" y="16" width="172" height="396" as="geometry" />
+        </mxCell>
+        <mxCell id="s5_hdr" value="5. Train vs. Eval" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4C1D95;strokeColor=#4C1D95;fontColor=#FFFFFF;fontStyle=1;fontSize=12;fontFamily=Helvetica;arcSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="24" width="156" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s5_tr" value="&lt;b&gt;Single-Teacher Train&lt;/b&gt;&lt;br&gt;Frozen Faster R-CNN&lt;br&gt;FPN + I/P Rate Loss" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6D4AFF;strokeWidth=1.4;fontSize=10.5;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1106" y="84" width="144" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="s5_ev" value="&lt;b&gt;Zero-Shot Evaluation&lt;/b&gt;&lt;br&gt;5 Detectors + Swin-T&lt;br&gt;ByteTrack &amp;amp; 3 Datasets" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0284C7;strokeWidth=1.4;fontSize=10.5;fontFamily=Helvetica;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1106" y="256" width="144" height="116" as="geometry" />
+        </mxCell>
+
+        <!-- Orthogonal Connectors -->
+        <mxCell id="e_in_mc" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1D4ED8;strokeWidth=1.8;endArrow=block;endFill=1;" edge="1" parent="1" source="s1_in" target="s1_mc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_mc_enc" value="6×H×W" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1D4ED8;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=9.5;fontStyle=1;fontColor=#1E3A8A;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s1_mc" target="s2_enc">
+          <mxGeometry x="-0.1" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="228" y="198" />
+              <mxPoint x="228" y="118" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_cond_enc" value="FiLM c" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#6D4AFF;strokeWidth=1.6;dashed=1;endArrow=block;endFill=1;fontSize=9.5;fontStyle=1;fontColor=#5B21B6;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s1_cond" target="s2_enc">
+          <mxGeometry x="-0.15" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="228" y="310" />
+              <mxPoint x="228" y="142" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_enc_gru" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#166534;strokeWidth=1.7;endArrow=block;endFill=1;" edge="1" parent="1" source="s2_enc" target="s2_gru">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_gru_dec" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#166534;strokeWidth=1.7;endArrow=block;endFill=1;" edge="1" parent="1" source="s2_gru" target="s2_dec">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dec_syn" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#B45309;strokeWidth=1.6;endArrow=block;endFill=1;" edge="1" parent="1" source="s2_dec" target="s2_syn_box">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="618" y="145" />
+              <mxPoint x="618" y="268" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_attn_halo" value="A&lt;sub&gt;t&lt;/sub&gt;&lt;sup&gt;eff&lt;/sup&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontStyle=1;fontColor=#92400E;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s2_dec" target="s3_halo">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="642" y="120" />
+              <mxPoint x="642" y="102" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_halo_pool" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.6;endArrow=block;endFill=1;" edge="1" parent="1" source="s3_halo" target="s3_pool">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pool_dqp" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.6;endArrow=block;endFill=1;" edge="1" parent="1" source="s3_pool" target="s3_dqp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dqp_addroi" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.6;endArrow=block;endFill=1;" edge="1" parent="1" source="s3_dqp" target="s3_addroi">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_addroi_codec" value="addroi" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#EA580C;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=9.5;fontStyle=1;fontColor=#C2410C;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s3_addroi" target="s4_fwd">
+          <mxGeometry x="-0.15" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="858" y="360" />
+              <mxPoint x="858" y="120" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_codec_px" value="STE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1E293B;strokeWidth=1.6;startArrow=block;startFill=1;endArrow=block;endFill=1;fontSize=9.5;fontStyle=1;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s4_fwd" target="s4_px">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_iedit_fwd" value="I&lt;sub&gt;edit,t&lt;/sub&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1D4ED8;strokeWidth=2.0;endArrow=block;endFill=1;fontSize=10;fontStyle=1;fontColor=#1E3A8A;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s2_mix" target="s4_fwd">
+          <mxGeometry x="-0.2" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="436" y="432" />
+              <mxPoint x="866" y="432" />
+              <mxPoint x="866" y="156" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_iedit_px" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1D4ED8;strokeWidth=1.8;endArrow=block;endFill=1;" edge="1" parent="1" source="s2_mix" target="s4_px">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="436" y="432" />
+              <mxPoint x="866" y="432" />
+              <mxPoint x="866" y="308" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_fwd_tr" value="Î&lt;sub&gt;t&lt;/sub&gt;, R&lt;sub&gt;t&lt;/sub&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1D4ED8;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontStyle=1;fontColor=#1E3A8A;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s4_fwd" target="s5_tr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_fwd_ev" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0284C7;strokeWidth=1.8;endArrow=block;endFill=1;" edge="1" parent="1" source="s4_fwd" target="s5_ev">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1076" y="136" />
+              <mxPoint x="1076" y="314" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_tr_px" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#BE123C;strokeWidth=1.8;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;" edge="1" parent="1" source="s5_tr" target="s4_px">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1076" y="168" />
+              <mxPoint x="1076" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_bwd_ste" value="Backward STE Gradients ∇L" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#BE123C;strokeWidth=2.0;dashed=1;dashPattern=6 3;endArrow=block;endFill=1;fontSize=10;fontStyle=1;fontColor=#9F1239;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="s4_px" target="s2_syn_box">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="968" y="458" />
+              <mxPoint x="370" y="458" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Bottom Legend -->
+        <mxCell id="leg_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="16" y="476" width="1248" height="32" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_1" value="─── Forward Data Flow" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontStyle=1;fontColor=#1D4ED8;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="45" y="478" width="220" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_2" value="- - - IWA Inter-Bypass (−96.7% GMACs)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontStyle=1;fontColor=#0D9488;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="330" y="478" width="260" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_3" value="─── Halo-Guarded QG ΔQP" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontStyle=1;fontColor=#C2410C;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="660" y="478" width="220" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_4" value="- - - Backward Proxy STE" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontStyle=1;fontColor=#BE123C;fontFamily=Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="960" y="478" width="240" height="28" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

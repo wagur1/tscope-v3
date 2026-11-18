@@ -12,17 +12,17 @@
 \textbf{Method} & \textbf{Paradigm} & \textbf{Tot BDBR} & \textbf{Inter/P BDBR} & \textbf{Tot BDBR} & \textbf{Inter/P BDBR} & \textbf{Tot BDBR} & \textbf{Tot BDBR} \\
  & & \textbf{FRCNN AP@50} & \textbf{FRCNN AP@50} & \textbf{FRCNN AP@50:95} & \textbf{FRCNN AP@50:95} & \textbf{YOLO AP@50 (ZS)} & \textbf{YOLO AP@50:95 (ZS)} \\
 \midrule
-Direct \texttt{libx265} Anchor & Standard HEVC 4:2:0 & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-Deterministic Blur + EMA & Non-Learned Filter & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-MPEG-VCM Spatial Resampling & Down/Upscale CTC & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-Detector-ROI \texttt{addroi} & Codec QG Only & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-Compressed-Domain FT FRCNN & Adapted Detector & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-Official SCOPE~\cite{dani2026scope} & External Image SOTA & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-T-SCOPE Spatial-Only & Framewise Pre-Edit & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-T-SCOPE IWA-Bypass ($K{=}32$) & Keyframe + P-Bypass & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\textbf{T-SCOPE Full (Ours)} & MC + QG P-Carry & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+Direct \texttt{libx265} Anchor & Standard HEVC 4:2:0 & +0.00\% {\scriptsize $[+0.0,+0.0]$} & +0.00\% & +0.00\% & +0.00\% & +0.00\% & +0.00\% \\
+Deterministic Blur + EMA & Non-Learned Filter & +44.26\% {\scriptsize $[+31.9,+56.6]$} & +48.82\% & +38.94\% & +43.05\% & +53.60\% & +42.58\% \\
+MPEG-VCM Spatial Resampling & Down/Upscale CTC & +19.67\% {\scriptsize $[+8.2,+30.7]$} & +22.39\% & +2.38\% & +3.97\% & +5.44\% & -5.53\% \\
+Detector-ROI \texttt{addroi} & Codec QG Only & -8.91\% {\scriptsize $[-15.1,-3.4]$} & -7.92\% & -12.59\% & -11.83\% & -9.65\% & -13.90\% \\
+Compressed-Domain FT FRCNN & Adapted Detector & +83.12\% {\scriptsize $[+49.0,+111.2]$} & +88.81\% & +84.02\% & +89.79\% & -- & -- \\
+Official SCOPE~\cite{dani2026scope} & External Image SOTA & +2.11\% {\scriptsize $[-6.3,+8.5]$} & +2.67\% & -2.25\% & -1.92\% & +5.29\% & +1.83\% \\
+T-SCOPE Spatial-Only & Framewise Pre-Edit & -9.80\% {\scriptsize $[-14.9,-5.9]$} & -9.74\% & -9.56\% & -9.49\% & -15.73\% & -12.58\% \\
+T-SCOPE IWA-Bypass ($K{=}32$) & Keyframe + P-Bypass & -11.92\% {\scriptsize $[-18.9,-6.0]$} & -11.38\% & -8.24\% & -7.48\% & -17.49\% & -9.87\% \\
+\textbf{T-SCOPE Full (Ours)} & MC + QG P-Carry & \textbf{-8.87\%} {\scriptsize $[-13.4,-4.4]$} & \textbf{-8.40\%} & -10.09\% & -9.70\% & -21.87\% & -16.30\% \\
 \midrule
-Oracle GT-Mask Bound$^\dagger$ & Non-Deployable GT & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+Oracle GT-Mask Bound$^\dagger$ & Non-Deployable GT & -10.19\% {\scriptsize $[-23.6,+4.9]$} & -7.56\% & -17.65\% & -15.60\% & +12.34\% & -3.33\% \\
 \bottomrule
 \end{tabular}%
 }
@@ -39,18 +39,18 @@ Oracle GT-Mask Bound$^\dagger$ & Non-Deployable GT & \texttt{TBD} & \texttt{TBD}
 \textbf{Ablation Variant} & \textbf{MC+GRU} & \textbf{Codec STE} & \textbf{QG dQP} & \textbf{P-Carry} & \textbf{Val Loss} & \textbf{Tot BDBR} & \textbf{P-Frame BDBR} & \textbf{Tot BDBR} & \textbf{YOLO (ZS)} & \textbf{MOT17-11} & \textbf{MOT17-13} \\
  & & & ($16{\times}16$) & & (Unif.) & \textbf{FR50} & \textbf{FR50} & \textbf{FR50:95} & \textbf{Tot AP50} & \textbf{Tot FR50} & \textbf{Tot FR50} \\
 \midrule
-\textbf{Full T-SCOPE} & \checkmark & \checkmark & \checkmark & Dynamic & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\texttt{iwa\_gop\_qp\_reuse} & \checkmark & P-Bypass & \checkmark & Keyframe & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\texttt{wo\_ctu\_delta\_qp} & \checkmark & \checkmark & -- & -- & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\texttt{spatial\_only\_scope} & -- & \checkmark & -- & -- & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\texttt{wo\_x265\_ste\_proxy} & \checkmark & Proxy Only & \checkmark & Dynamic & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+\textbf{Full T-SCOPE} & \checkmark & \checkmark & \checkmark & Dynamic & 3.782 & \textbf{-8.87\%} {\scriptsize $[-13.4,-4.4]$} & -8.40\% & -10.09\% & -21.87\% & -16.60\% & -6.50\% \\
+\texttt{iwa\_gop\_qp\_reuse} & \checkmark & P-Bypass & \checkmark & Keyframe & 3.831 & -11.92\% {\scriptsize $[-18.9,-6.0]$} & -11.38\% & -8.24\% & -17.49\% & -12.32\% & -11.93\% \\
+\texttt{wo\_ctu\_delta\_qp} & \checkmark & \checkmark & -- & -- & 3.760 & -6.24\% {\scriptsize $[-13.0,-2.0]$} & -5.76\% & -5.77\% & -15.10\% & -17.86\% & -5.85\% \\
+\texttt{spatial\_only\_scope} & -- & \checkmark & -- & -- & 3.992 & -9.80\% {\scriptsize $[-14.9,-5.9]$} & -9.74\% & -9.56\% & -15.73\% & -13.83\% & -8.89\% \\
+\texttt{wo\_x265\_ste\_proxy} & \checkmark & Proxy Only & \checkmark & Dynamic & 3.701 & -6.03\% {\scriptsize $[-11.8,-1.7]$} & -5.47\% & -7.66\% & -9.49\% & -14.06\% & -5.08\% \\
 \midrule
 \multicolumn{12}{l}{\textit{Pre-Registered Quantitative Claim Falsification Audit (Requires Point $\Delta < 0\%$ and Upper 95\% Bootstrap CI $< 0\%$):}} \\
-\multicolumn{4}{l}{C01: Full vs. Anchor (FRCNN Tot AP@50)} & \multicolumn{3}{c}{$\Delta = \texttt{TBD}$} & \multicolumn{3}{c}{\texttt{TBD}} & \multicolumn{2}{c}{\texttt{TBD}} \\
-\multicolumn{4}{l}{C02: Temporal MC vs. Spatial (Inter/P-BPP AP@50)} & \multicolumn{3}{c}{$\Delta = \texttt{TBD}$} & \multicolumn{3}{c}{\texttt{TBD}} & \multicolumn{2}{c}{\texttt{TBD}} \\
-\multicolumn{4}{l}{C03: Halo-Guarded QG dQP vs. Pixel-Only} & \multicolumn{3}{c}{$\Delta = \texttt{TBD}$} & \multicolumn{3}{c}{\texttt{TBD}} & \multicolumn{2}{c}{\texttt{TBD}} \\
-\multicolumn{4}{l}{C04: Hybrid Real-Codec STE vs. Proxy-Only} & \multicolumn{3}{c}{$\Delta = \texttt{TBD}$} & \multicolumn{3}{c}{\texttt{TBD}} & \multicolumn{2}{c}{\texttt{TBD}} \\
-\multicolumn{4}{l}{C05: Single-Teacher -> Unseen YOLOv8s Tot AP@50} & \multicolumn{3}{c}{$\Delta = \texttt{TBD}$} & \multicolumn{3}{c}{\texttt{TBD}} & \multicolumn{2}{c}{\texttt{TBD}} \\
+\multicolumn{4}{l}{C01: Full vs. Anchor (FRCNN Tot AP@50)} & \multicolumn{3}{c}{$\Delta = -8.87\%$} & \multicolumn{3}{c}{$[-13.45,\,-4.38]\%$} & \multicolumn{2}{c}{\texttt{supported}} \\
+\multicolumn{4}{l}{C02: Temporal MC vs. Spatial (Inter/P-BPP AP@50)} & \multicolumn{3}{c}{$\Delta = +3.98\%$} & \multicolumn{3}{c}{$[-2.20,\,+8.96]\%$} & \multicolumn{2}{c}{\texttt{falsified}} \\
+\multicolumn{4}{l}{C03: Halo-Guarded QG dQP vs. Pixel-Only} & \multicolumn{3}{c}{$\Delta = -2.63\%$} & \multicolumn{3}{c}{$[-6.45,\,+3.29]\%$} & \multicolumn{2}{c}{\texttt{inconclusive\_ci\_crosses\_threshold}} \\
+\multicolumn{4}{l}{C04: Hybrid Real-Codec STE vs. Proxy-Only} & \multicolumn{3}{c}{$\Delta = -2.84\%$} & \multicolumn{3}{c}{$[-6.51,\,+2.38]\%$} & \multicolumn{2}{c}{\texttt{inconclusive\_ci\_crosses\_threshold}} \\
+\multicolumn{4}{l}{C05: Single-Teacher -> Unseen YOLOv8s Tot AP@50} & \multicolumn{3}{c}{$\Delta = -21.87\%$} & \multicolumn{3}{c}{$[-27.86,\,-15.68]\%$} & \multicolumn{2}{c}{\texttt{supported}} \\
 \bottomrule
 \end{tabular}%
 }
@@ -67,19 +67,19 @@ Oracle GT-Mask Bound$^\dagger$ & Non-Deployable GT & \texttt{TBD} & \texttt{TBD}
 \textbf{Codec \& GOP Regime} & \textbf{Downstream Backbone} & \textbf{Supervision Role} & \textbf{Spatial-Only} & \textbf{T-SCOPE Full} & \textbf{T-SCOPE} & \textbf{T-SCOPE Full} & \textbf{Feat-SNR} \\
  & & & \textbf{Tot AP@50} & \textbf{Tot AP@50 (95\% CI)} & \textbf{P-BDBR AP@50} & \textbf{Tot AP@50:95} & \textbf{Tot BDBR} \\
 \midrule
-HEVC LDP (\texttt{x265}, $B{=}0$) & Faster R-CNN R50-FPN v2 & In-Domain Teacher & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC LDP (\texttt{x265}, $B{=}0$) & YOLOv8s (CSPDarknet) & Zero-Shot Unseen & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC LDP (\texttt{x265}, $B{=}0$) & RetinaNet R50-FPN v2 & Zero-Shot Unseen & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC LDP (\texttt{x265}, $B{=}0$) & FCOS R50-FPN & Zero-Shot Unseen & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC LDP (\texttt{x265}, $B{=}0$) & SSDLite MobileNetV3 & Zero-Shot Unseen & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC LDP (\texttt{x265}, $B{=}0$) & Swin-T ViT (Feat SNR) & Zero-Shot Feature & -- & -- & -- & -- & \texttt{TBD} \\
+HEVC LDP (\texttt{x265}, $B{=}0$) & Faster R-CNN R50-FPN v2 & In-Domain Teacher & -9.79\% & -8.87\% {\scriptsize $[-13.4,-4.4]$} & -8.40\% & -10.09\% & +0.01\% \\
+HEVC LDP (\texttt{x265}, $B{=}0$) & YOLOv8s (CSPDarknet) & Zero-Shot Unseen & -15.73\% & \textbf{-21.87\%} {\scriptsize $[-27.9,-15.7]$} & -22.08\% & -16.30\% & -4.56\% \\
+HEVC LDP (\texttt{x265}, $B{=}0$) & RetinaNet R50-FPN v2 & Zero-Shot Unseen & -8.78\% & \textbf{-9.40\%} {\scriptsize $[-12.9,-5.5]$} & -8.96\% & -8.85\% & +1.76\% \\
+HEVC LDP (\texttt{x265}, $B{=}0$) & FCOS R50-FPN & Zero-Shot Unseen & -14.41\% & \textbf{-14.74\%} {\scriptsize $[-18.2,-10.2]$} & -14.60\% & -13.85\% & +4.29\% \\
+HEVC LDP (\texttt{x265}, $B{=}0$) & SSDLite MobileNetV3 & Zero-Shot Unseen & -12.29\% & \textbf{-14.05\%} {\scriptsize $[-26.8,-0.5]$} & -13.86\% & -13.95\% & +18.50\% \\
+HEVC LDP (\texttt{x265}, $B{=}0$) & Swin-T ViT (Feat SNR) & Zero-Shot Feature & -- & -- & -- & -- & -5.02\% \\
 \midrule
-AVC LDP (\texttt{x264}, $f{=}1$) & Faster R-CNN R50-FPN v2 & In-Domain & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-AVC LDP (\texttt{x264}, $f{=}1$) & YOLOv8s (Zero-Shot) & Zero-Shot & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-AVC LDP (\texttt{x264}, $f{=}1$) & RetinaNet (Zero-Shot) & Zero-Shot & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC RA (\texttt{x265}, $B{=}4$) & Faster R-CNN R50-FPN v2 & In-Domain & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC RA (\texttt{x265}, $B{=}4$) & YOLOv8s (Zero-Shot) & Zero-Shot & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-HEVC RA (\texttt{x265}, $B{=}4$) & RetinaNet (Zero-Shot) & Zero-Shot & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+AVC LDP (\texttt{x264}, $f{=}1$) & Faster R-CNN R50-FPN v2 & In-Domain & -9.04\% & -15.57\% {\scriptsize $[-18.7,-10.6]$} & -15.51\% & -13.91\% & -1.98\% \\
+AVC LDP (\texttt{x264}, $f{=}1$) & YOLOv8s (Zero-Shot) & Zero-Shot & -13.03\% & -13.48\% {\scriptsize $[-17.6,-10.2]$} & -13.36\% & -12.73\% & -5.48\% \\
+AVC LDP (\texttt{x264}, $f{=}1$) & RetinaNet (Zero-Shot) & Zero-Shot & -9.56\% & -13.91\% {\scriptsize $[-16.6,-11.0]$} & -13.78\% & -13.41\% & -2.40\% \\
+HEVC RA (\texttt{x265}, $B{=}4$) & Faster R-CNN R50-FPN v2 & In-Domain & -15.22\% & -14.49\% {\scriptsize $[-19.9,-9.9]$} & -13.90\% & -11.02\% & -0.48\% \\
+HEVC RA (\texttt{x265}, $B{=}4$) & YOLOv8s (Zero-Shot) & Zero-Shot & -19.71\% & -21.47\% {\scriptsize $[-26.2,-12.9]$} & -21.40\% & -17.29\% & -5.38\% \\
+HEVC RA (\texttt{x265}, $B{=}4$) & RetinaNet (Zero-Shot) & Zero-Shot & -11.33\% & -10.74\% {\scriptsize $[-14.6,-6.1]$} & -9.85\% & -11.41\% & -1.83\% \\
 \bottomrule
 \end{tabular}%
 }
@@ -96,13 +96,13 @@ HEVC RA (\texttt{x265}, $B{=}4$) & RetinaNet (Zero-Shot) & Zero-Shot & \texttt{T
 \textbf{Method} & \textbf{CRF 27} & \textbf{CRF 27} & \textbf{CRF 27} & \textbf{Tot BDBR} & \textbf{Tot BDBR} & \textbf{Tot BDBR} & \textbf{MOT20 (ZS)} & \textbf{KITTI Multi-Cls} \\
  & \textbf{MOTA (\%)} & \textbf{HOTA (\%)} & \textbf{IDSW $\downarrow$} & \textbf{MOTA} & \textbf{IDF1} & \textbf{HOTA} & \textbf{Tot mAP@50} & \textbf{Tot mAP@50} \\
 \midrule
-Direct \texttt{libx265} Anchor & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-MPEG-VCM Spatial Resampling & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & -- & -- \\
-Detector-ROI \texttt{addroi} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & -- & -- \\
-Official SCOPE~\cite{dani2026scope} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & -- & -- \\
-T-SCOPE Spatial-Only & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-T-SCOPE IWA-Bypass ($K{=}32$) & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\textbf{T-SCOPE Full (Ours)} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+Direct \texttt{libx265} Anchor & 38.00 & 43.32 & 222 & +0.00\% & +0.00\% & +0.00\% & +0.00\% & +0.00\% \\
+MPEG-VCM Spatial Resampling & -- & -- & -- & -- & -- & -- & -- & -- \\
+Detector-ROI \texttt{addroi} & -- & -- & -- & -- & -- & -- & -- & -- \\
+Official SCOPE~\cite{dani2026scope} & -- & -- & -- & -- & -- & -- & -- & -- \\
+T-SCOPE Spatial-Only & 38.70 & 42.70 & 203 & +26.63\% & +6.68\% & +5.76\% & -19.62\% & -13.55\% \\
+T-SCOPE IWA-Bypass ($K{=}32$) & 39.12 & 43.17 & 262 & +0.75\% & -0.16\% & -3.22\% & -5.39\% & -8.70\% \\
+\textbf{T-SCOPE Full (Ours)} & 38.55 & 42.33 & 283 & +15.53\% & -0.71\% & \textbf{-2.22\%} & -12.72\% & -8.40\% \\
 \bottomrule
 \end{tabular}%
 }
@@ -118,17 +118,17 @@ T-SCOPE IWA-Bypass ($K{=}32$) & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \te
 \toprule
 \textbf{Component / Operating Mode} & \textbf{Params (M)} & \textbf{GMACs / Frame} & \textbf{Mean (ms/f)} & \textbf{P95 (ms/f)} & \textbf{Throughput (FPS)} & \textbf{Peak VRAM (MB) / Rate} \\
 \midrule
-6-DOF Cauchy-IRLS Estimator Only & 0.000 & 0.10 & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-T-SCOPE Spatial-Only ($B{=}0$ MC) & 6.109 & 107.11 & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-\textbf{T-SCOPE IWA-Bypass ($K{=}32$, $-96.7\%$ GMACs)} & 6.109 & \textbf{4.52} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-T-SCOPE Full (Per-Frame U-Net + MC) & 6.109 & 137.78 & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
-Official SCOPE~\cite{dani2026scope} (Framewise) & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} & \texttt{TBD} \\
+6-DOF Cauchy-IRLS Estimator Only & 0.000 & 0.10 & 1.35 & 1.51 & 741.8 & 342.6 \\
+T-SCOPE Spatial-Only ($B{=}0$ MC) & 6.109 & 137.58 & 174.49 & 176.38 & 5.7 & 974.1 \\
+\textbf{T-SCOPE IWA-Bypass ($K{=}32$, $-96.7\%$ GMACs)} & 6.109 & 4.43 & 8.83 & 9.08 & 113.2 & 1325.5 \\
+T-SCOPE Full (Per-Frame U-Net + MC) & 6.109 & 137.71 & 180.05 & 184.69 & 5.5 & 1336.8 \\
+Official SCOPE~\cite{dani2026scope} (Framewise) & 1.879 & 86.56 & 100.17 & 101.17 & 10.0 & 7991.9 \\
 \midrule
-CPU Encode+Decode: Unedited \texttt{libx265} Anchor & \texttt{libx265} & -- & \texttt{TBD} & -- & \texttt{TBD} & \texttt{TBD} (bpp) \\
-CPU Encode+Decode: T-SCOPE IWA Static \texttt{addroi} & \texttt{libx265} & -- & \texttt{TBD} & -- & \texttt{TBD} & \texttt{TBD} (bpp) \\
-CPU Encode+Decode: T-SCOPE Full Dynamic \texttt{addroi} & \texttt{libx265} & -- & \texttt{TBD} & -- & \texttt{TBD} & \texttt{TBD} (bpp) \\
-CPU Encode+Decode: Unedited \texttt{libx264} Anchor & \texttt{libx264} & -- & \texttt{TBD} & -- & \texttt{TBD} & \texttt{TBD} (bpp) \\
-CPU Encode+Decode: T-SCOPE Full \texttt{libx264} \texttt{addroi} & \texttt{libx264} & -- & \texttt{TBD} & -- & \texttt{TBD} & \texttt{TBD} (bpp) \\
+CPU Encode+Decode: Unedited \texttt{libx265} Anchor & \texttt{libx265} & -- & 66.19 & -- & 15.1 & 0.0621 (bpp) \\
+CPU Encode+Decode: T-SCOPE IWA Static \texttt{addroi} & \texttt{libx265} & -- & 58.22 & -- & 17.2 & 0.0604 (bpp) \\
+CPU Encode+Decode: T-SCOPE Full Dynamic \texttt{addroi} & \texttt{libx265} & -- & 61.12 & -- & 16.4 & 0.0614 (bpp) \\
+CPU Encode+Decode: Unedited \texttt{libx264} Anchor & \texttt{libx264} & -- & 50.76 & -- & 19.7 & 0.0424 (bpp) \\
+CPU Encode+Decode: T-SCOPE Full \texttt{libx264} \texttt{addroi} & \texttt{libx264} & -- & 52.69 & -- & 19.0 & 0.0444 (bpp) \\
 \bottomrule
 \end{tabular}%
 }

@@ -144,9 +144,21 @@ python -I scripts/sync_paper_tables.py --pool-dir ./outputs_kaggle_pool
 <!-- BEGIN_V3_BENCHMARKS -->
 ## 5. Verified T-SCOPE v3 Q1 Benchmark Summary (Auto-Synced via `scripts/sync_paper_tables.py`)
 
-Source manifest SHA-256: `pending` (`schema_version = 3`, `640x384` 16:9, `yuv420p`, `GOP = 32`, `CRFS = [27, 32, 37, 42]`, `PchipInterpolator` + `10,000` paired clip-bootstrap 95% CIs). Full disaggregation in [`docs/V3_Q1_BENCHMARK_REPORT.md`](./docs/V3_Q1_BENCHMARK_REPORT.md).
+Source manifest SHA-256: `15fbc3d5438657b2388db742fe6e3fdf63c98b62d3cccefde90618344aa139f5` (`schema_version = 3`, `640x384` 16:9, `yuv420p`, `GOP = 32`, `CRFS = [27, 32, 37, 42]`, `PchipInterpolator` + `10,000` paired clip-bootstrap 95% CIs). Full disaggregation in [`docs/V3_Q1_BENCHMARK_REPORT.md`](./docs/V3_Q1_BENCHMARK_REPORT.md).
 
-*(Đang tự động cập nhật ngay khi cụm kernel Phase 3 hoàn tất gộp `merged_benchmarks.json`)*
+| Variant / Method | Total BDBR (`FRCNN AP@50` + 95% CI) | Inter/P-Frame BDBR (`FRCNN AP@50`) | Total BDBR (`FRCNN AP@50:95`) | Zero-Shot `YOLOv8s AP@50` BDBR |
+| :--- | :---: | :---: | :---: | :---: |
+| `anchor_x265` | +0.00% (`[+0.00, +0.00]`) | +0.00% | +0.00% | +0.00% |
+| `deterministic_blur_ema` | +44.26% (`[+31.93, +56.55]`) | +48.82% | +38.94% | +53.60% |
+| `spatial_only_scope` | -9.80% (`[-14.91, -5.94]`) | -9.74% | -9.56% | -15.73% |
+| `wo_x265_ste_proxy` | -6.03% (`[-11.83, -1.67]`) | -5.47% | -7.66% | -9.49% |
+| `wo_ctu_delta_qp` | -6.24% (`[-13.00, -2.04]`) | -5.76% | -5.77% | -15.10% |
+| `iwa_gop_qp_reuse` (`-96.7%` GMACs) | -11.92% (`[-18.91, -6.00]`) | -11.38% | -8.24% | -17.49% |
+| **`full_tscope` (Ours)** | **-8.87%** (`[-13.45, -4.38]`) | -8.40% | -10.09% | -21.87% |
+| `oracle_gt_mask_upper_bound` (GT) | -10.19% (`[-23.61, +4.91]`) | -7.56% | -17.65% | +12.34% |
+
+- **Cross-Codec & Random Access:** `libx264` (`family_id=1`) FRCNN AP@50 BDBR = -15.57% | HEVC Random Access (`IBBP`, `bframes=4`) FRCNN AP@50 BDBR = -14.49%.
+- **ByteTrack Multi-Object Tracking BDBR:** `MOTA` = +15.53%, `IDF1` = -0.71%, `HOTA` = -2.22%.
 <!-- END_V3_BENCHMARKS -->
 
 ---
