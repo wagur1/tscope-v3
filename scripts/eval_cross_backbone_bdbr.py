@@ -546,6 +546,52 @@ def _evaluate_regime(
     return regime_summary
 
 
+ALL_REGIMES = (
+    "hevc_x265_low_delay_p",
+    "avc_x264_low_delay_p",
+    "hevc_x265_random_access_ibbp",
+)
+
+
+def merge_regime_json_files(input_paths: Sequence[Path], output_path: Path) -> Dict[str, Any]:
+    """Merge independent cross-backbone regime JSON bundles into one cross_backbone_bdbr.json."""
+    if not input_paths:
+        raise ValueError("No regime JSON files supplied for merge")
+    merged_regimes: Dict[str, Any] = {}
+    base_doc: Optional[Dict[str, Any]] = None
+    for path in input_paths:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        if base_doc is None:
+            base_doc = doc
+        elif doc.get("provenance", {}).get("tscope_ckpt_sha256") != base_doc.get("provenance", {}).get("tscope_ckpt_sha256"):
+            raise ValueError(f"Checkpoint SHA mismatch when merging {path}")
+        for r_key, r_val in doc.get("regimes", {}).items():
+            merged_regimes[r_key] = r_val
+
+    assert base_doc is not None
+    ordered_regimes = {k: merged_regimes[k] for k in ALL_REGIMES if k in merged_regimes}
+    for k, v in merged_regimes.items():
+        if k not in ordered_regimes:
+            ordered_regimes[k] = v
+
+    primary_key = "hevc_x265_low_delay_p" if "hevc_x265_low_delay_p" in ordered_regimes else next(iter(ordered_regimes))
+    out_doc = {
+        "schema_version": base_doc.get("schema_version", SCHEMA_VERSION),
+        "provenance": {
+            **base_doc.get("provenance", {}),
+            "merged_from_regime_files": [str(Path(p).name) for p in input_paths],
+            "regimes_included": list(ordered_regimes.keys()),
+        },
+        "regimes": ordered_regimes,
+        "backbones": ordered_regimes[primary_key]["backbones"],
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(out_doc, f, indent=2, allow_nan=False)
+    print(f"Merged {len(ordered_regimes)} regime(s) -> {output_path}")
+    return out_doc
+
+
 @torch.no_grad()
 def main() -> None:
     parser = argparse.ArgumentParser(description="Zero-Shot Cross-Detector & Cross-Codec BDBR Evaluation (T-SCOPE v3)")
@@ -562,8 +608,15 @@ def main() -> None:
     parser.add_argument("--num_shards", type=int, default=1)
     parser.add_argument("--eval_x264", action="store_true", default=False, help="Also evaluate cross-codec libx264 (family_id=1)")
     parser.add_argument("--eval_ra", action="store_true", default=False, help="Also evaluate Random Access IBBP (bframes=4)")
+    parser.add_argument("--regimes", nargs="+", choices=list(ALL_REGIMES), default=None, help="Explicit subset of regimes to run")
+    parser.add_argument("--merge_regime_jsons", nargs="+", default=None, help="Merge partial regime JSONs into cross_backbone_bdbr.json")
     parser.add_argument("--bootstrap_resamples", type=int, default=10000)
     args = parser.parse_args()
+
+    if args.merge_regime_jsons:
+        out_p = Path(args.output_json) if args.output_json else Path(args.output_dir) / "cross_backbone_bdbr.json"
+        merge_regime_json_files([Path(p) for p in args.merge_regime_jsons], out_p)
+        return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_root = (args.data_root or "").strip()
@@ -602,25 +655,32 @@ def main() -> None:
     evaluator = CrossDetectorEvaluator(device, include_yolo=True)
     all_specs = evaluator.active_backbone_specs()
 
+    selected_regimes = set(args.regimes) if args.regimes else {
+        "hevc_x265_low_delay_p",
+        *(["avc_x264_low_delay_p"] if args.eval_x264 else []),
+        *(["hevc_x265_random_access_ibbp"] if args.eval_ra else []),
+    }
+
     regimes: Dict[str, Any] = {}
-    regimes["hevc_x265_low_delay_p"] = _evaluate_regime(
-        regime_name="HEVC-LDP (x265, fam=0, bframes=0)",
-        family_id=0,
-        bframes=0,
-        gop_len=args.gop_len,
-        qps=CRFS,
-        dataset=dataset,
-        model_tscope=model_tscope,
-        model_spatial=model_spatial,
-        codec=codec,
-        evaluator=evaluator,
-        backbones_for_regime=all_specs,
-        device=device,
-        n_bootstrap=args.bootstrap_resamples,
-    )
+    if "hevc_x265_low_delay_p" in selected_regimes:
+        regimes["hevc_x265_low_delay_p"] = _evaluate_regime(
+            regime_name="HEVC-LDP (x265, fam=0, bframes=0)",
+            family_id=0,
+            bframes=0,
+            gop_len=args.gop_len,
+            qps=CRFS,
+            dataset=dataset,
+            model_tscope=model_tscope,
+            model_spatial=model_spatial,
+            codec=codec,
+            evaluator=evaluator,
+            backbones_for_regime=all_specs,
+            device=device,
+            n_bootstrap=args.bootstrap_resamples,
+        )
 
     primary_And_yolo_specs = [s for s in all_specs if s[0] in ("fasterrcnn_r50_fpn_v2", "yolov8s", "retinanet_r50_fpn_v2")]
-    if args.eval_x264:
+    if "avc_x264_low_delay_p" in selected_regimes:
         regimes["avc_x264_low_delay_p"] = _evaluate_regime(
             regime_name="AVC-LDP (x264, fam=1, bframes=0)",
             family_id=1,
@@ -637,7 +697,7 @@ def main() -> None:
             n_bootstrap=args.bootstrap_resamples,
         )
 
-    if args.eval_ra:
+    if "hevc_x265_random_access_ibbp" in selected_regimes:
         regimes["hevc_x265_random_access_ibbp"] = _evaluate_regime(
             regime_name="HEVC-RA (x265, fam=0, bframes=4)",
             family_id=0,
@@ -654,6 +714,9 @@ def main() -> None:
             n_bootstrap=args.bootstrap_resamples,
         )
 
+    primary_regime_key = (
+        "hevc_x265_low_delay_p" if "hevc_x265_low_delay_p" in regimes else next(iter(regimes))
+    )
     test_seqs = sorted(set(c["seq_name"] for c in dataset.clips))
     summary_results: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -675,7 +738,7 @@ def main() -> None:
         },
         "regimes": regimes,
         # Top-level alias to primary HEVC LDP backbones for seamless table consumption
-        "backbones": regimes["hevc_x265_low_delay_p"]["backbones"],
+        "backbones": regimes[primary_regime_key]["backbones"],
     }
 
     out_path = (
