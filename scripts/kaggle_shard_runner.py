@@ -1055,10 +1055,9 @@ def run_eval_all_variants_shards(args: argparse.Namespace) -> None:
             clean_flat = video.view(b * t, 3, h, w)
             # Chunk clean detector inference to keep T4 VRAM low on 32-frame 640x384 clips
             clean_dets = []
-            for start_f in range(0, clean_flat.shape[0], 8):
-                clean_dets.extend(
-                    fpn_teacher.detector(list(torch.clamp(clean_flat[start_f : start_f + 8], 0.0, 1.0)))
-                )
+            for start_f in range(0, clean_flat.shape[0], 4):
+                sub_c = fpn_teacher.detector(list(torch.clamp(clean_flat[start_f : start_f + 4], 0.0, 1.0)))
+                clean_dets.extend({k: v.detach().cpu() for k, v in d.items()} for d in sub_c)
             cached_clean_info = {
                 "t_feats": fpn_teacher.extract_fast_pyramid(clean_flat),
                 "clean_dets": clean_dets,
@@ -1192,6 +1191,9 @@ def run_eval_all_variants_shards(args: argparse.Namespace) -> None:
                             if isinstance(v_rec, float) and not np.isfinite(v_rec):
                                 rec[k_rec] = None
                         records_by_variant[variant].append(rec)
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             if (idx + 1) % 2 == 0 or (idx + 1) == len(dataset):
                 print(

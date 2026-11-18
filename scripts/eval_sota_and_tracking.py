@@ -1084,16 +1084,19 @@ def run_sota_and_tracking_on_mot17(
     if run_sota:
         if fpn_teacher.use_yolov8s and fpn_teacher.yolo_wrapper is not None:
             def _yolo_roi_fn(flat_imgs: torch.Tensor) -> List[torch.Tensor]:
-                res = fpn_teacher.yolo_wrapper.predict(
-                    source=flat_imgs, imgsz=max(img_hw), conf=0.25, classes=[0], verbose=False
-                )
-                return [r.boxes.xyxy.detach() for r in res]
+                outs_y: List[torch.Tensor] = []
+                for st_y in range(0, flat_imgs.shape[0], 8):
+                    res = fpn_teacher.yolo_wrapper.predict(
+                        source=flat_imgs[st_y : st_y + 8], imgsz=max(img_hw), conf=0.25, classes=[0], verbose=False
+                    )
+                    outs_y.extend(r.boxes.xyxy.detach() for r in res)
+                return outs_y
             roi_det_fn = _yolo_roi_fn
         else:
             def _frcnn_roi_fn(flat_imgs: torch.Tensor) -> List[torch.Tensor]:
                 outs = []
-                for st in range(0, flat_imgs.shape[0], 8):
-                    dets = fpn_teacher.detector(list(flat_imgs[st : st + 8]))
+                for st in range(0, flat_imgs.shape[0], 4):
+                    dets = fpn_teacher.detector(list(flat_imgs[st : st + 4]))
                     for d in dets:
                         m = (d["labels"] == 1) & (d["scores"] >= 0.35)
                         outs.append(d["boxes"][m].detach())
@@ -1110,6 +1113,8 @@ def run_sota_and_tracking_on_mot17(
                     device=device,
                     epochs=args.finetune_det_epochs,
                 )
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     active_methods = ["anchor_x265", "tscope_spatial_only", "tscope_iwa_gop_qp_reuse", "tscope_full"]
     if run_sota:
@@ -1136,8 +1141,9 @@ def run_sota_and_tracking_on_mot17(
         clean_flat = video.view(b * t, c, h, w)
 
         clean_dets = []
-        for st in range(0, clean_flat.shape[0], 8):
-            clean_dets.extend(fpn_teacher.detector(list(torch.clamp(clean_flat[st : st + 8], 0.0, 1.0))))
+        for st in range(0, clean_flat.shape[0], 4):
+            sub_cd = fpn_teacher.detector(list(torch.clamp(clean_flat[st : st + 4], 0.0, 1.0)))
+            clean_dets.extend({k: v.detach().cpu() for k, v in d.items()} for d in sub_cd)
         cached_clean_info = {"t_feats": fpn_teacher.extract_fast_pyramid(clean_flat), "clean_dets": clean_dets}
 
         roi_dqp_clip = build_detector_roi_dqp_offsets(video, roi_det_fn) if (run_sota and roi_det_fn is not None) else None
@@ -1187,8 +1193,9 @@ def run_sota_and_tracking_on_mot17(
                 if m_name == "compressed_video_finetuned_frcnn" and finetuned_frcnn is not None:
                     recon_flat = c_out["video_recon"].view(b * t, c, h, w)
                     ft_dets = []
-                    for st in range(0, recon_flat.shape[0], 8):
-                        ft_dets.extend(finetuned_frcnn(list(torch.clamp(recon_flat[st : st + 8], 0.0, 1.0))))
+                    for st in range(0, recon_flat.shape[0], 4):
+                        sub_ft = finetuned_frcnn(list(torch.clamp(recon_flat[st : st + 4], 0.0, 1.0)))
+                        ft_dets.extend({k: v.detach().cpu() for k, v in d.items()} for d in sub_ft)
                     gt_f = gt_boxes[0].detach().cpu()
                     ig_f = ignore_boxes[0].detach().cpu()
                     raw_d = {"gt_boxes": [], "ignore_boxes": [], "pred_boxes": [], "pred_scores": []}
@@ -1239,6 +1246,9 @@ def run_sota_and_tracking_on_mot17(
                         seq_frame_dets.setdefault((m_name, qp, seq_name), []).append(
                             (f_num, gb_np, gid_np, ig_np, pb_np, ps_np)
                         )
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         if (idx + 1) % 3 == 0 or (idx + 1) == len(dataset):
             print(f"[SOTA+Tracking] Clip {idx + 1}/{len(dataset)} ({time.perf_counter() - t0:.1f}s)", flush=True)

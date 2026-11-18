@@ -537,12 +537,18 @@ class FrozenFPNDetectorTeacher(nn.Module):
 
         if self.use_torchvision and self.detector is not None:
             self.detector.eval()
-            clean_dets = (
-                cached_clean_info["clean_dets"]
-                if cached_clean_info is not None and "clean_dets" in cached_clean_info
-                else self.detector(list(torch.clamp(clean_flat, 0.0, 1.0)))
-            )
-            recon_dets = self.detector(list(torch.clamp(recon_flat, 0.0, 1.0)))
+            det_chunk_size = 4
+            if cached_clean_info is not None and "clean_dets" in cached_clean_info:
+                clean_dets = cached_clean_info["clean_dets"]
+            else:
+                clean_dets = []
+                for st in range(0, clean_flat.shape[0], det_chunk_size):
+                    sub_c = self.detector(list(torch.clamp(clean_flat[st : st + det_chunk_size], 0.0, 1.0)))
+                    clean_dets.extend({k: v.detach().cpu() for k, v in d.items()} for d in sub_c)
+            recon_dets = []
+            for st in range(0, recon_flat.shape[0], det_chunk_size):
+                sub_r = self.detector(list(torch.clamp(recon_flat[st : st + det_chunk_size], 0.0, 1.0)))
+                recon_dets.extend({k: v.detach().cpu() for k, v in d.items()} for d in sub_r)
 
             gt_flat = gt_boxes.view(b * t, -1, 4) if gt_boxes is not None else None
             gt_cls_flat = gt_classes.view(b * t, -1) if gt_classes is not None else None
@@ -617,13 +623,17 @@ class FrozenFPNDetectorTeacher(nn.Module):
                 ] or [0]
                 yolo_to_coco = {v: k for k, v in COCO91_TO_YOLO80.items()}
                 yolo_imgsz = (h, w) if (h % 32 == 0 and w % 32 == 0) else max(h, w)
-                yolo_res = self.yolo_wrapper.predict(
-                    source=torch.clamp(recon_flat, 0.0, 1.0),
-                    imgsz=yolo_imgsz,
-                    conf=0.01,
-                    classes=yolo_classes,
-                    verbose=False,
-                )
+                yolo_res = []
+                for st_y in range(0, recon_flat.shape[0], 8):
+                    yolo_res.extend(
+                        self.yolo_wrapper.predict(
+                            source=torch.clamp(recon_flat[st_y : st_y + 8], 0.0, 1.0),
+                            imgsz=yolo_imgsz,
+                            conf=0.01,
+                            classes=yolo_classes,
+                            verbose=False,
+                        )
+                    )
                 for r_y in yolo_res:
                     clip_yolo_pred_boxes.append(r_y.boxes.xyxy.detach().cpu())
                     clip_yolo_pred_scores.append(r_y.boxes.conf.detach().cpu())
