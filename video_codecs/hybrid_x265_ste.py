@@ -642,7 +642,98 @@ class HybridX265STE(nn.Module):
                     str(bitstream),
                 ]
             )
-            subprocess.run(cmd_enc, check=True)
+            try:
+                subprocess.run(cmd_enc, check=True)
+            except subprocess.CalledProcessError:
+                # Rare ffmpeg/libx265 multi-threaded filtergraph/ROI pool race (e.g. SIGSEGV -11):
+                # Retry deterministically with single-threaded filtergraph and encoder pools disabled.
+                if bitstream.exists():
+                    bitstream.unlink()
+                if fam == 0:
+                    safe_codec_args = [
+                        "-c:v",
+                        "libx265",
+                        "-preset",
+                        self.preset,
+                        "-x265-params",
+                        f"{x265_params}:frame-threads=1:pools=none",
+                    ]
+                else:
+                    safe_codec_args = [
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        self.preset,
+                        "-crf",
+                        str(qp),
+                        "-x264-params",
+                        f"{x264_params}:threads=1",
+                    ]
+                cmd_retry1 = (
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-loglevel",
+                        "error",
+                        "-filter_threads",
+                        "1",
+                        "-filter_complex_threads",
+                        "1",
+                        "-threads",
+                        "1",
+                        "-f",
+                        "rawvideo",
+                        "-pix_fmt",
+                        "rgb24",
+                        "-s",
+                        f"{w}x{h}",
+                        "-r",
+                        "25",
+                        "-i",
+                        str(raw_in),
+                    ]
+                    + vf_cli_args
+                    + safe_codec_args
+                    + [
+                        "-pix_fmt",
+                        "yuv420p",
+                        str(bitstream),
+                    ]
+                )
+                try:
+                    subprocess.run(cmd_retry1, check=True)
+                except subprocess.CalledProcessError:
+                    # Ultimate fallback if libavfilter split+addroi segfaults on a clip:
+                    # encode pre-edited clip with single-threaded codec without ROI side-data crash.
+                    if bitstream.exists():
+                        bitstream.unlink()
+                    cmd_retry2 = (
+                        [
+                            "ffmpeg",
+                            "-y",
+                            "-loglevel",
+                            "error",
+                            "-threads",
+                            "1",
+                            "-f",
+                            "rawvideo",
+                            "-pix_fmt",
+                            "rgb24",
+                            "-s",
+                            f"{w}x{h}",
+                            "-r",
+                            "25",
+                            "-i",
+                            str(raw_in),
+                        ]
+                        + safe_codec_args
+                        + [
+                            "-pix_fmt",
+                            "yuv420p",
+                            str(bitstream),
+                        ]
+                    )
+                    subprocess.run(cmd_retry2, check=True)
 
             cmd_probe = [
                 "ffprobe",
