@@ -1,6 +1,8 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -461,7 +463,41 @@ class _PreparedClipBootstrapCurve:
                     np.asarray(c_list, dtype=np.int64),
                 )
             )
-        return {"clip_gt": clip_gt, "per_thr": per_thr}
+        per_thr_compressed = [
+            self._compress_iou_table(tp_a, fp_a, c_a, self.num_clips)
+            for tp_a, fp_a, c_a in per_thr
+        ]
+        return {"clip_gt": clip_gt, "per_thr": per_thr, "per_thr_compressed": per_thr_compressed}
+
+    @staticmethod
+    def _compress_iou_table(
+        tp_arr: np.ndarray,
+        fp_arr: np.ndarray,
+        clip_idx_arr: np.ndarray,
+        num_clips: int,
+    ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """
+        Exact sufficient compression of sorted detection outcomes onto TP events:
+        recall only increases when tp_arr > 0, and between TP events precision decreases
+        monotonically as false positives accumulate. Preserves 101-point AP identically.
+        """
+        if tp_arr.size == 0:
+            return None
+        tp_idx = np.flatnonzero(tp_arr > 0)
+        if tp_idx.size == 0:
+            return (
+                np.zeros(0, dtype=np.int64),
+                np.zeros(0, dtype=np.float64),
+                np.zeros((0, num_clips), dtype=np.float64),
+            )
+        m = tp_idx.size
+        fp_mat = np.zeros((m, num_clips), dtype=np.float64)
+        fp_mask = fp_arr > 0
+        seg_ids = np.searchsorted(tp_idx, np.arange(tp_arr.size), side="left")
+        valid_fp = fp_mask & (seg_ids < m)
+        if np.any(valid_fp):
+            np.add.at(fp_mat, (seg_ids[valid_fp], clip_idx_arr[valid_fp]), fp_arr[valid_fp])
+        return clip_idx_arr[tp_idx], tp_arr[tp_idx], fp_mat
 
     @classmethod
     def _weighted_ap_batch(
@@ -471,6 +507,7 @@ class _PreparedClipBootstrapCurve:
         tp_arr: np.ndarray,
         fp_arr: np.ndarray,
         clip_idx_arr: np.ndarray,
+        compressed: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
     ) -> np.ndarray:
         """Exact 101-point AP for a batch of integer clip-multiplicity vectors `weights` [B, K]."""
         bsz = weights.shape[0]
@@ -479,20 +516,29 @@ class _PreparedClipBootstrapCurve:
         valid_gt_rows = np.where(tot_gt > 0.0)[0]
         if valid_gt_rows.size == 0:
             return out
-        if tp_arr.size == 0:
+        if compressed is None:
+            compressed = cls._compress_iou_table(tp_arr, fp_arr, clip_idx_arr, weights.shape[1])
+        if compressed is None or compressed[0].size == 0:
             out[valid_gt_rows] = 0.0
             return out
 
+        tp_clip, tp_val, fp_mat = compressed
         w_sub = weights[valid_gt_rows]  # [Bv, K]
         gt_sub = tot_gt[valid_gt_rows]  # [Bv]
-        w_pred = w_sub[:, clip_idx_arr]  # [Bv, N]
-        tp_cum = np.cumsum(w_pred * tp_arr[None, :], axis=1)
-        fp_cum = np.cumsum(w_pred * fp_arr[None, :], axis=1)
+
+        tp_cum = np.cumsum(w_sub[:, tp_clip] * tp_val[None, :], axis=1)
+        fp_inc = w_sub @ fp_mat.T
+        fp_cum = np.cumsum(fp_inc, axis=1)
         has_any_pred = (tp_cum[:, -1] + fp_cum[:, -1]) > 0.0
 
         rec = tp_cum / gt_sub[:, None]
-        prec = tp_cum / np.maximum(tp_cum + fp_cum, 1e-9)
-        mpre = np.maximum.accumulate(prec[:, ::-1], axis=1)[:, ::-1]
+        denom = tp_cum + fp_cum
+        np.maximum(denom, 1e-9, out=denom)
+        prec = tp_cum
+        np.divide(tp_cum, denom, out=prec)
+        prec_rev = np.ascontiguousarray(prec[:, ::-1])
+        np.maximum.accumulate(prec_rev, axis=1, out=prec_rev)
+        mpre = prec_rev[:, ::-1]
 
         grid = cls.RECALL_GRID
         n_cols = rec.shape[1]
@@ -533,20 +579,47 @@ class _PreparedClipBootstrapCurve:
                 valid_p = denom_p > 0.0
                 res["p_frame_bpp"][valid_p, q_i] = (weights[valid_p] @ self.p_bits[crf]) / denom_p[valid_p]
 
+        tasks: List[Tuple[int, str, int, Dict[str, Any]]] = []
+        for q_i, crf in enumerate(self.crfs):
             for prefix, table in (
                 ("", self.frcnn_tables[crf]),
                 *(("yolo_", self.yolo_tables[crf]) for _ in ([1] if self.has_yolo else [])),
             ):
-                ap_per_thr = np.full((len(self.IOU_THRESHOLDS), n_boot), np.nan, dtype=np.float64)
-                for t_idx, (tp_arr, fp_arr, c_arr) in enumerate(table["per_thr"]):
-                    for start in range(0, n_boot, batch_size):
-                        end = min(n_boot, start + batch_size)
-                        ap_per_thr[t_idx, start:end] = self._weighted_ap_batch(
-                            weights[start:end], table["clip_gt"], tp_arr, fp_arr, c_arr
-                        )
-                # Round matching FrozenFPNDetectorTeacher.compute_dataset_level_coco_metrics convention
-                res[f"{prefix}gt_ap50_pct"][:, q_i] = np.round(ap_per_thr[0] * 100.0, 3)
-                res[f"{prefix}gt_ap50_95_pct"][:, q_i] = np.round(np.mean(ap_per_thr, axis=0) * 100.0, 3)
+                for t_idx in range(len(self.IOU_THRESHOLDS)):
+                    tasks.append((q_i, prefix, t_idx, table))
+
+        ap_grid: Dict[Tuple[int, str], np.ndarray] = {}
+        for q_i, _ in enumerate(self.crfs):
+            ap_grid[(q_i, "")] = np.full((len(self.IOU_THRESHOLDS), n_boot), np.nan, dtype=np.float64)
+            if self.has_yolo:
+                ap_grid[(q_i, "yolo_")] = np.full((len(self.IOU_THRESHOLDS), n_boot), np.nan, dtype=np.float64)
+
+        def _eval_thr(task: Tuple[int, str, int, Dict[str, Any]]) -> Tuple[int, str, int, np.ndarray]:
+            q_i, prefix, t_idx, table = task
+            tp_arr, fp_arr, c_arr = table["per_thr"][t_idx]
+            comp = table.get("per_thr_compressed", [None] * len(table["per_thr"]))[t_idx]
+            row = np.full(n_boot, np.nan, dtype=np.float64)
+            for start in range(0, n_boot, batch_size):
+                end = min(n_boot, start + batch_size)
+                row[start:end] = self._weighted_ap_batch(
+                    weights[start:end], table["clip_gt"], tp_arr, fp_arr, c_arr, compressed=comp
+                )
+            return q_i, prefix, t_idx, row
+
+        n_workers = min(len(tasks), max(1, (os.cpu_count() or 2) // 2), 8)
+        if n_workers > 1 and n_boot >= 500:
+            with ThreadPoolExecutor(max_workers=n_workers) as ex:
+                for q_i, prefix, t_idx, row in ex.map(_eval_thr, tasks):
+                    ap_grid[(q_i, prefix)][t_idx] = row
+        else:
+            for task in tasks:
+                q_i, prefix, t_idx, row = _eval_thr(task)
+                ap_grid[(q_i, prefix)][t_idx] = row
+
+        for (q_i, prefix), ap_per_thr in ap_grid.items():
+            # Round matching FrozenFPNDetectorTeacher.compute_dataset_level_coco_metrics convention
+            res[f"{prefix}gt_ap50_pct"][:, q_i] = np.round(ap_per_thr[0] * 100.0, 3)
+            res[f"{prefix}gt_ap50_95_pct"][:, q_i] = np.round(np.mean(ap_per_thr, axis=0) * 100.0, 3)
 
         return res
 
