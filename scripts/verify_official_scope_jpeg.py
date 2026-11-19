@@ -481,7 +481,7 @@ def run_mot17_bridge_verification(args: argparse.Namespace, scope_bundle: Dict[s
     print(f"[MOT17 Bridge] Loaded {len(ds)} clips ({len(ds) * 32} frames)", flush=True)
 
     fpn_teacher = FrozenFPNDetectorTeacher(pretrained=True, use_yolov8s=True).to(device).eval()
-    codec = HybridX265STE(preset="medium", gop_len=1, pix_fmt="yuv420p", qg_size=16).to(device).eval()
+    codec = HybridX265STE(preset="medium", gop_len=1, bframes=0).to(device).eval()
 
     scope_model = scope_bundle["model"]
     fam_map = scope_bundle["fam_map"]

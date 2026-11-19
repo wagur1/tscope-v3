@@ -548,20 +548,44 @@ def try_setup_official_scope(
             try:
                 subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "gdown"], check=False, timeout=90)
                 weights_dir.mkdir(parents=True, exist_ok=True)
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "gdown",
-                        "--folder",
-                        "--remaining-ok",
-                        "https://drive.google.com/drive/folders/1YbB1M0Bdp1QZl-aoGNWCCsJRMgzROGES",
-                        "-O",
-                        str(weights_dir),
-                    ],
-                    check=True,
-                    timeout=300,
+                single_ckpt = (
+                    weights_dir
+                    / "preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557"
+                    / "best_val.pt"
                 )
+                single_ckpt.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    subprocess.run(
+                        [
+                            "curl",
+                            "-L",
+                            "--retry",
+                            "3",
+                            "-sS",
+                            "https://drive.usercontent.google.com/download?id=1M7lHWbNjrckMNBC623Cn5PvBDuDUBlda&export=download&confirm=t",
+                            "-o",
+                            str(single_ckpt),
+                        ],
+                        check=True,
+                        timeout=180,
+                    )
+                except Exception:
+                    if single_ckpt.exists():
+                        single_ckpt.unlink(missing_ok=True)
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "gdown",
+                            "--folder",
+                            "--remaining-ok",
+                            "https://drive.google.com/drive/folders/1YbB1M0Bdp1QZl-aoGNWCCsJRMgzROGES",
+                            "-O",
+                            str(weights_dir),
+                        ],
+                        check=True,
+                        timeout=300,
+                    )
             except Exception as exc:
                 return {"available": False, "reason": f"Failed to download miccunifi/SCOPE weights from Google Drive: {exc}"}
         cand_pts = sorted(weights_dir.rglob("best_val.pt")) or sorted(weights_dir.rglob("*.pt"))
