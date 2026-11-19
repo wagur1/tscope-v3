@@ -45,6 +45,8 @@
 
 ## 3. Kiến trúc và Cơ chế T-SCOPE (`6,108,814` tham số)
 
+![T-SCOPE Spatio-Temporal Preprocessing Module](./docs/figures/fig_preprocessing_module.png)
+
 ### 3.1. Điều kiện hóa đa họ codec và mức độ nén (`SeverityConditioner`)
 - Nhúng rời rạc họ bộ mã hóa `f ∈ {0: libx265, 1: libx264}` (8 chiều, cập nhật luân phiên 50/50 mỗi batch) ghép với khai triển đa thức–bản lề 6 chiều của mức nén `s = clip((CRF - 22) / 25, 0, 1)`, sinh vector điều biến FiLM `c ∈ R^64`.
 
