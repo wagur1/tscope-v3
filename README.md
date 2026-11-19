@@ -1,145 +1,71 @@
-# T-SCOPE v3: Tiền Biên Tập Video Nhất Quán Thời Gian và Phân Bổ Lượng Tử Hóa Cấp CTU cho Video Coding for Machines (`x265` / `x264`)
+# T-SCOPE: Motion-Compensated Semantic Pre-Editing and Halo-Guarded Quantization-Group Rate Allocation for Video Coding for Machines (`x265` / `x264`)
 
-Mã nguồn PyTorch, giao thức thực nghiệm chuẩn Q1 (IEEE TCSVT / TIP), bộ kiểm thử tự động (`55/55` unit tests) và bản thảo `IEEEtran` 12 trang cho **T-SCOPE v3**.
+> **Tiếng Việt:** Tiền biên tập ngữ nghĩa bù chuyển động và phân bổ lượng tử hóa cấp Nhóm Lượng Tử (QG) có viền bảo vệ cho Mã hóa Video phục vụ Thị giác Máy (`libx265` HEVC & `libx264` AVC, 100% tương thích luồng bit chuẩn 4:2:0).
 
-- **Bản thảo bài báo LaTeX:** [`paper/main.tex`](./paper/main.tex) và [`paper/main.pdf`](./paper/main.pdf) (đồng bộ tự động từ JSON thực nghiệm qua [`scripts/sync_paper_tables.py`](./scripts/sync_paper_tables.py)).
-- **Trọng số phát hành (5 Uniform Model Soups đã kiểm định trên `MOT17-09`):** [`release_ckpts/`](./release_ckpts/) và báo cáo tính liên thông tuyến tính [`docs/soup_connectivity_report.json`](./docs/soup_connectivity_report.json).
-- **Báo cáo đánh giá đầy đủ chuẩn Q1:** [`docs/V3_Q1_BENCHMARK_REPORT.md`](./docs/V3_Q1_BENCHMARK_REPORT.md).
+- **Bản thảo bài báo (English Preprint):** [`paper/main.pdf`](./paper/main.pdf) ([`paper/main.tex`](./paper/main.tex))
+- **Bản thảo bài báo (Tiếng Việt Preprint):** [`paper/main_vi.pdf`](./paper/main_vi.pdf) ([`paper/main_vi.tex`](./paper/main_vi.tex))
+- **Báo cáo thực nghiệm đầy đủ (Auto-Synced JSON Single Source of Truth):** [`docs/V3_Q1_BENCHMARK_REPORT.md`](./docs/V3_Q1_BENCHMARK_REPORT.md)
+- **Trọng số phát hành (5 Uniform Model Soups kiểm định trên `MOT17-09`):** [`release_ckpts/`](./release_ckpts/) & [`docs/soup_connectivity_report.json`](./docs/soup_connectivity_report.json)
+- **Kiểm thử tự động:** `55 passed, 11 subtests passed` (`pytest -q`)
+
+![T-SCOPE Pipeline Overview](./docs/figures/fig_pipeline_overview.png)
 
 ---
 
-## 1. Tổng hợp những thay đổi cốt lõi từ T-SCOPE v2 lên T-SCOPE v3
+## 1. Tổng hợp những nâng cấp cốt lõi ở T-SCOPE v3
 
-`T-SCOPE v3` được thiết kế lại toàn diện từ `v2` nhằm khắc phục triệt để **26 điểm hạn chế phương pháp luận và thực nghiệm (F01–F26)** theo tiêu chuẩn thẩm định khắt khe của các tạp chí Q1 (**IEEE TCSVT / IEEE TIP**):
+`T-SCOPE v3` chuẩn hóa toàn diện phương pháp luận, giao thức bộ mã hóa thực tế và kiểm định thống kê:
 
-| Hạng mục kỹ thuật | Hạn chế ở `T-SCOPE v2` | Nâng cấp chuẩn hóa ở `T-SCOPE v3` |
+| Hạng mục kỹ thuật | Hạn chế ở phiên bản cũ (`v2`) | Chuẩn hóa ở `T-SCOPE v3` |
 | :--- | :--- | :--- |
-| **1. Định dạng màu (Chroma Subsampling)** | Đầu vào PNG RGB khiến `ffmpeg` tự chuyển ngầm sang `yuv444p`, làm phình bitrate nền của anchor và lệch hoàn toàn chuẩn nén thực tế. | Ép cứng `-pix_fmt yuv420p` chuẩn MPEG VCM / HEVC CTC trên toàn bộ phép nén `libx265` và `libx264` trong [`video_codecs/hybrid_x265_ste.py`](./video_codecs/hybrid_x265_ste.py). |
-| **2. Cấu trúc GOP & Chế độ mã hóa** | Dùng `keyint=30` không tường minh `bframes` (mặc định `bframes=4`) nhưng mô tả nhầm là Low-Delay P. | Chuẩn hóa `EVAL_GOP_LEN = 32`, tách rõ 2 chế độ độc lập: **Low-Delay P (`bframes = 0`)** và **Random Access (`IBBP`, `bframes = 4`)**. |
-| **3. Đa họ Codec (`SeverityConditioner`)** | Chỉ cố định 1 họ codec (`libx265`), không kiểm chứng khả năng khái quát sang bộ mã hóa khác. | Mở rộng nhúng đa họ codec (`num_families = 2`: `family_id=0` cho **HEVC/`libx265`**, `family_id=1` cho **H.264/`libx264`**) và đánh giá chéo trực tiếp. |
-| **4. Tỉ lệ khung hình & Dải điểm làm việc CRF** | Resize vuông `512×512` làm méo ngang người đi bộ `1.78×` (từ chuẩn `16:9`); dải `CRF ∈ {22, 27, 32, 37}` thiếu vùng bitrate thấp khiến đường cong mAP ít chồng lấp khi tính BD-Rate. | Giữ nguyên tỉ lệ `16:9` chuẩn **`640×384` (`IMG_H=384, IMG_W=640`)** và dịch dải đo sang **`CRF ∈ {27, 32, 37, 42}`** phủ trọn vùng suy giảm mAP của chuẩn VCM. |
-| **5. Độ phân giải lưới `addroi` CTU/QG & Viền bảo vệ** | Bóp bản đồ tầm quan trọng xuống tối đa `16×16` ô trước khi gán `addroi`, làm mất chi tiết sub-CTU và gây nhiễu halo từ khối nền QP cao lan vào biên vật thể. | Gỡ bỏ hoàn toàn nút thắt downsample `2×`, giữ nguyên lưới Quantization Group `16×16 px` (**`40×24 = 960` ô QG** tại `640×384`, mịn gấp `3.75×` so với `v2`) kèm lớp đệm **`3×3` Foreground Halo Guard** trước khi gom QG. |
-| **6. Bypass P-frame thực sự (`iwa_gop_qp_reuse`)** | Chế độ GOP reuse ở `v2` vẫn chạy toàn bộ mạng U-Net/ConvNeXt trên mọi frame rồi mới trộn đầu ra (`0%` giảm FLOPs, thiếu bảng đo FPS/VRAM). | Cài đặt đường tắt thực sự `forward_inter_bypass_step()` trong [`models/temporal_scope.py`](./models/temporal_scope.py): chỉ chạy mạng đầy đủ tại I-frame, còn `31` P-frame chỉ warp nhẹ theo chuyển động affine 6-DOF, **giảm `96.78%` GMACs/frame** (`137.71 -> 4.43 GMACs`) và **tăng tốc `20.4×` trên Tesla T4 (`5.55 -> 113.21 FPS`)**. |
-| **7. Ổn định số học FP16/AMP** | Trộn xác suất biên `1 - 1e-4` dưới `float16` bị làm tròn thành `1.0`, gây `torch.logit(1.0) = +inf` và `NaN` trong `binary_cross_entropy` ở các epoch sâu. | Ép tính toán nhánh trộn logit ở `FP32` (`autocast(enabled=False)`), chặn an toàn `nan_to_num` trước `BCE` trong [`losses/vcm_temporal_loss.py`](./losses/vcm_temporal_loss.py) và tự động fallback batch sang `FP32` nếu gặp gradient không hữu hạn. |
-| **8. Chống rò rỉ Detector (True Zero-Shot)** | Đưa cả `Faster R-CNN` lẫn `YOLOv8s` vào hàm loss lúc huấn luyện nhưng lại tuyên bố đánh giá "zero-shot cross-architecture" trên `YOLOv8s`. | **Huấn luyện với duy nhất 1 teacher đóng băng (`Faster R-CNN ResNet50-FPN v2`, `use_yolov8s = False`)**. Toàn bộ **4 kiến trúc còn lại** (`YOLOv8s`, `RetinaNet`, `FCOS`, `SSDLite-MobileNetV3`) hoàn toàn ẩn lúc train, đảm bảo kiểm chứng zero-shot 100% trung thực. |
-| **9. Công bằng hóa Ablation & Cân bằng Shard** | Tắt `real_x265_ste` ở các baseline nhưng bật ở `full_tscope` (gây nhiễu biến), đồng thời chia số lượng shard không đều giữa các biến thể (`5` vs `2` shard). | Cân bằng tuyệt đối **`3 shards × 5 variants = 15 shards`**. Bật công bằng `use_real_x265_ste = True` cho cả 4 biến thể chính (`full_tscope`, `wo_ctu_delta_qp`, `spatial_only_scope`, `iwa_gop_qp_reuse`) và tách riêng biến thể thứ 5 `wo_x265_ste_proxy` để cô lập chính xác đóng góp của codec-in-the-loop STE. |
-| **10. Thống kê BD-Rate chuẩn Q1 & Kiểm định giả thuyết** | Dùng đa thức bậc 3 dễ dao động Runge khi ít điểm chồng lấp; thiếu khoảng tin cậy thống kê và thiếu tiêu chí bác bỏ giả thuyết. | Dùng nội suy đơn điệu từng khúc **`scipy.interpolate.PchipInterpolator`** trên trục `log10(bpp)`, tách riêng **Total BDBR** và **Inter/P-Frame BDBR**, kèm **`10,000` lần paired clip-bootstrap 95% CI** và **5 tiêu chí kiểm định tiền đăng ký `C01–C05`** trong [`scripts/experiment_protocol.py`](./scripts/experiment_protocol.py). |
-| **11. Đối chứng SOTA ngoại vi, Đa tập dữ liệu & Tracking** | Chỉ tự so với biến thể nội bộ trên tập đơn lẻ `MOT17` ở tác vụ phát hiện vật thể. | Tích hợp trực tiếp mã nguồn & trọng số công khai của **SCOPE (`miccunifi/SCOPE`)**; bổ sung bài toán **Multi-Object Tracking (ByteTrack: `MOTA`, `IDF1`, `HOTA`)**; mở rộng đánh giá sang **MOT20**, **KITTI Tracking** và chuẩn YUV **HEVC CTC Class B**. |
-| **12. Đồng bộ tự động Code – Bài báo & Tái lập** | Công thức trong bản thảo `v2` bị lệch tham số so với code thực chạy; manifest chứa đường dẫn tuyệt đối của máy cá nhân. | Viết mới bản thảo `IEEEtran` 12 trang khớp 100% code `v3`; [`scripts/sync_paper_tables.py`](./scripts/sync_paper_tables.py) tự sinh macro/bảng LaTeX từ JSON; chuẩn hóa đường dẫn tương đối an toàn trong manifest. |
+| **1. Định dạng màu (Chroma Subsampling)** | Đầu vào PNG RGB khiến `ffmpeg` chuyển ngầm sang `yuv444p`, lệch chuẩn nén thực tế. | Ép cứng `-pix_fmt yuv420p` (Main 4:2:0) trên toàn bộ phép nén `libx265` và `libx264` trong [`video_codecs/hybrid_x265_ste.py`](./video_codecs/hybrid_x265_ste.py). |
+| **2. Cấu trúc GOP & Chế độ mã hóa** | Dùng `keyint=30` không tường minh `bframes`. | Chuẩn hóa `EVAL_GOP_LEN = 32`, tách bạch **Low-Delay P (`bframes = 0`)** và **Random Access (`IBBP`, `bframes = 4`)** với đếm byte thực theo PTS qua `ffprobe`. |
+| **3. Đa họ Codec (`SeverityConditioner`)** | Chỉ cố định 1 họ codec (`libx265`). | Huấn luyện chung 2 họ codec (`family_id=0`: **HEVC/`libx265`**, `family_id=1`: **H.264/`libx264`**) và kiểm chứng chéo trực tiếp. |
+| **4. Tỉ lệ khung hình & Dải làm việc CRF** | Resize vuông `512×512` làm méo ngang đối tượng; `CRF ∈ {22..37}` bão hòa ở đầu cao. | Giữ tỉ lệ `16:9` chuẩn **`640×384` (`IMG_H=384, IMG_W=640`)** và dải chuẩn VCM **`CRF ∈ {27, 32, 37, 42}`**. |
+| **5. Lưới `addroi` QG nguyên bản & Halo Guard** | Hạ mẫu bản đồ chú ý xuống `16×16` ô làm rò `+$ΔQP` vào biên người đi bộ. | Giữ nguyên lưới Quantization Group `16×16 px` (**`40×24 = 960` ô QG** tại `640×384`) kèm bộ lọc cực đại **`3×3` Foreground Halo Guard** và tự động offload `filter_script` khi vượt `4,000` ký tự. |
+| **6. Đường tắt P-frame thực sự (`iwa_gop_qp_reuse`)** | Vẫn chạy U-Net trên mọi frame rồi mới trộn đầu ra (`0%` giảm FLOPs). | Cài đặt `forward_inter_bypass_step()` trong [`models/temporal_scope.py`](./models/temporal_scope.py): chỉ chạy U-Net/ConvGRU tại I-frame (`t mod 32 = 0`), 31 P-frame đi qua nhánh nhẹ `inter_refine` (`1,604` tham số), **giảm `96.78%` GMACs/frame** (`137.71 -> 4.43 GMACs`) và đạt **`113.21 FPS` (`20.4×`)** trên Tesla T4. |
+| **7. Ổn định số học FP16/AMP** | `torch.logit` dưới `float16` dễ tràn `+inf`/`NaN`. | Tính toán nhánh trộn logit & IRLS ở `FP32` (`autocast(enabled=False)`), kẹp an toàn trước `BCE` trong [`losses/vcm_temporal_loss.py`](./losses/vcm_temporal_loss.py). |
+| **8. Chống rò rỉ Detector (Single-Teacher)** | Dùng nhiều detector lúc huấn luyện làm mất tính khách quan zero-shot. | **Chỉ huấn luyện với duy nhất 1 giáo viên đóng băng (`Faster R-CNN ResNet50-FPN v2`, `use_yolov8s = False`)**; toàn bộ `YOLOv8s`, `RetinaNet`, `FCOS`, `SSDLite`, `Swin-T` hoàn toàn ẩn lúc train. |
+| **9. Công bằng hóa Ablation & Cân bằng Shard** | Khác biệt cấu hình STE và số shard giữa các biến thể. | Cân bằng **`3 shards × 5 variants = 15 shards`** (`seed=2026`), bật công bằng `real_x265_ste=True` cho cả 4 biến thể chính và tách riêng `wo_x265_ste_proxy`. |
+| **10. Thống kê PCHIP BDBR & Kiểm định bác bỏ** | Đa thức bậc 3 dễ dao động Runge; thiếu khoảng tin cậy. | Nội suy đơn điệu từng khúc **`scipy.interpolate.PchipInterpolator`** (`JCTVC-E137`), tách **Total BDBR** và **Inter/P-Frame BDBR**, kèm **`10,000` lần paired clip-bootstrap 95% CI** và **5 cổng kiểm định bác bỏ `C01–C05`**. |
 
 ---
 
-## 2. Đối chiếu các hướng tiếp cận VCM trước đây
+## 2. Đối chiếu với các công trình VCM tiêu biểu
 
-| # | Công trình & Nơi công bố | Cơ chế chính | Giới hạn kỹ thuật mà T-SCOPE v3 giải quyết |
+| # | Công trình | Cơ chế chính | Điểm nghẽn mà T-SCOPE giải quyết |
 | :--- | :--- | :--- | :--- |
-| **1** | **Video Preprocessing for Machine Vision**<br>*(Fei Zhao et al., IEEE DCC 2024)* | Tiền xử lý 2 nhánh (2D + 3D Conv) trước `x264`/`x265`, huấn luyện qua Virtual Codec với MSE toàn khung. | MSE toàn khung giữ lại nhiễu nền dư thừa; chỉ học qua proxy ảo nên lệch phân phối lượng tử của `x265` thật (`v3` chứng minh trực tiếp qua đối chứng `full_tscope` vs `wo_x265_ste_proxy`). |
-| **2** | **SCOPE**<br>*(Silvia Dani et al., 2025/2026 — `miccunifi/SCOPE`)* | Điều biến FiLM theo `(f, s)`, trộn nhánh bảo toàn vật thể và nhánh làm mờ nền qua bản đồ chú ý `A`. | Xử lý độc lập từng ảnh gây nhấp nháy nền liên khung làm tăng phần dư P-frame; không truyền bản đồ chú ý xuống bộ phân bổ QP cấp CTU/QG của codec (`v3` đối chứng trực tiếp với trọng số gốc SCOPE và `spatial_only_scope`). |
-| **3** | **TSW-Pre**<br>*(Mingyi Yang et al., IEEE TCSVT 2024)* | U-Net kết hợp Task-Attentive Semantic Modulation (SFT) và chưng cất đặc trưng FPN. | Đòi hỏi chạy mạng detector nặng ngay tại phía bộ mã hóa ở mọi khung hình; không hỗ trợ điều biến theo mức QP hoặc bỏ qua khung liên tiếp. |
-| **4** | **Preprocessing Enhanced ICM**<br>*(Guo Lu et al., IEEE TCSVT 2024)* | Hybrid Forward-BPG / Backward-Proxy với lớp thích ứng lượng tử QAL. | Chỉ thiết kế cho nén ảnh tĩnh Intra, không giải quyết bù chuyển động toàn cục hay kế thừa bản đồ QP trên chuỗi GOP video. |
-| **5** | **WA-RDO / IWA-RDO**<br>*(S. Fernández-Menduiña et al., IEEE ICASSP 2026)* | Xấp xỉ Jacobian miền đặc trưng; tái sử dụng bản đồ trọng số I-frame cho toàn bộ GOP. | Tái sử dụng tĩnh không bù chuyển động bị lệch vị trí khi camera hoặc vật thể dịch chuyển nhanh (`v3` khắc phục bằng warp 6-DOF Cauchy-IRLS tốc độ `741.84 FPS` ở chế độ `iwa_gop_qp_reuse`). |
+| **1** | **Zhao et al.** *(DCC 2024, `arXiv:2512.15331`)* | Tiền xử lý 2 nhánh (2D + 3D Conv) trước `x264`/`x265`, chỉ huấn luyện qua Virtual Codec với MSE toàn khung. | MSE toàn khung ép giữ chi tiết nền thừa; chỉ học qua codec ảo nên lệch phân phối lượng tử `aq-mode=2` và `yuv420p` của `x265`/`x264` thật. |
+| **2** | **SCOPE** *(Dani et al., 2026 — `miccunifi/SCOPE`)* | FiLM U-Net hai nhánh cho ảnh tĩnh, trộn bảo toàn vật thể và làm mờ nền qua mặt nạ `A`. | Lọc độc lập từng frame gây nhấp nháy phần dư liên khung trên GOP 32 frame (`+2.11%` BDBR trên `MOT17`) và bỏ phí mặt nạ `A` trước bước RDO của codec. |
+| **3** | **TSW-Pre** *(Yang et al., IEEE TCSVT 2024)* | U-Net điều biến ngữ nghĩa theo tác vụ (SFT). | Đòi hỏi chạy mạng detector nặng ngay tại phía bộ mã hóa ở mọi khung hình. |
+| **4** | **Lu et al.** *(IEEE TCSVT 2024)* | Hybrid Forward-BPG / Backward-Proxy với lớp QAL. | Chỉ thiết kế cho ảnh tĩnh Intra, không giải quyết bù chuyển động toàn cục hay điều khiển QG trên chuỗi P/B-frame. |
+| **5** | **WA-RDO / IWA-RDO** *(Fernández-Menduiña et al., ICASSP 2026)* | Tái sử dụng bản đồ trọng số I-frame cho GOP trong mã hóa đặc trưng. | T-SCOPE đưa phân bổ không âm có viền bảo vệ `3×3` xuống lưới QG `16×16` của `x265`/`x264` và bổ sung bù chuyển động `6-DOF Cauchy-IRLS` (`741.84 FPS`) cho đường tắt P-frame. |
 
 ---
 
-## 3. Kiến trúc và Cơ chế T-SCOPE v3
-
-**T-SCOPE v3** (`6,108,814` tham số) đặt phía trước bộ mã hóa chuẩn (`libx265` / `libx264`) hoàn toàn tương thích luồng bit chuẩn (mọi bộ giải mã chuẩn đều giải mã trực tiếp không cần sửa đổi):
-
-```text
-Chuỗi Video {I_t} (640×384, 16:9)
-       │
-       ▼
-[TemporalSCOPE v3 (6,108,814 params)]
-  │  • SeverityConditioner đa họ codec (HEVC x265 / AVC x264) & mức độ nén s
-  │  • 6-DOF Cauchy-IRLS Affine Motion Alignment (FP32, 741.84 FPS) + Static Snap
-  │  • Chế độ đầy đủ (full_tscope): Multi-Scale FiLM U-Net + H/4 ConvGRU
-  │  • Chế độ siêu tốc (iwa_gop_qp_reuse): Bypass P-frame (-96.78% GMACs, 113.21 FPS)
-  ├──► 1. Khung hình tiền biên tập {I_edit,t} (Smoothstep STE FG + Occlusion-Gated EMA BG)
-  └──► 2. Bản đồ chú ý hiệu dụng + 3×3 Halo Guard ──► Lưới ΔQP 40×24 QG (16×16 px)
-                                                               │
-                                                               ▼
-5 Detectors + ByteTrack ◄── Giải mã chuẩn ◄── libx265 / libx264 (-pix_fmt yuv420p, addroi)
-```
+## 3. Kiến trúc và Cơ chế T-SCOPE (`6,108,814` tham số)
 
 ### 3.1. Điều kiện hóa đa họ codec và mức độ nén (`SeverityConditioner`)
-- Nhúng rời rạc họ bộ mã hóa `f ∈ {0: libx265, 1: libx264}` (`num_families = 2`, 8 chiều) ghép với khai triển phi tuyến 6 chiều của mức nén chuẩn hóa `s = clip((QP - 22) / 25, 0, 1)`, tạo vector điều biến `c ∈ R^64` cho toàn bộ các khối `FiLMConvBlock`.
+- Nhúng rời rạc họ bộ mã hóa `f ∈ {0: libx265, 1: libx264}` (8 chiều, cập nhật luân phiên 50/50 mỗi batch) ghép với khai triển đa thức–bản lề 6 chiều của mức nén `s = clip((CRF - 22) / 25, 0, 1)`, sinh vector điều biến FiLM `c ∈ R^64`.
 
-### 3.2. Căn chỉnh chuyển động 6-DOF Cauchy-IRLS, Khóa nền EMA & Bypass P-frame
-- **6-DOF Cauchy-IRLS (`estimate_global_affine_irls`):** Tìm kiếm thô tại `H/8` và tinh chỉnh lặp trọng số Cauchy tại `H/8 -> H/4` bằng `float32` kèm *Static Identity Snap* (`< 0.75 px`), căn chỉnh chính xác `I_{t-1}`, trạng thái ẩn `h_{t-1}` và nền tích lũy `bg_{t-1}` trên các cảnh lia máy nhanh (`MOT17-13`, `KITTI`).
-- **Chế độ `iwa_gop_qp_reuse` (`forward_inter_bypass_step`):** Chỉ chạy bộ mã hóa đặc trưng trên khung đầu GOP (`t = 0`), còn các P-frame kế tiếp warp trực tiếp bản đồ chú ý và nền từ khung trước qua ma trận affine 6-DOF (tính toán logit ở `FP32` chống tràn số), cắt bỏ `96.78%` khối lượng tính toán mỗi frame.
+### 3.2. Nhánh thời gian: 6-DOF Cauchy-IRLS, Khóa tĩnh, Khử nhiễu hạt & Đường tắt IWA
+- **6-DOF Cauchy-IRLS (`estimate_global_affine_irls`):** Tìm dịch chuyển thô tại `H/8` và tinh chỉnh Gauss–Newton trọng số Cauchy (`δ = 0.04`) hai tầng `H/8 -> H/4` ở `FP32`, kèm **khóa tĩnh `< 0.75 px`** (tránh làm mờ chuỗi camera tĩnh) và **khử nhiễu hạt cảm biến mềm** (`τ_core = 0.012`).
+- **Motion-Warped `H/4` ConvGRU & Locked BG EMA:** Căn chỉnh trạng thái ẩn và khóa trung bình trượt mũ vùng nền tĩnh theo độ tin cậy chuyển động, giữ khối nền vào chế độ `SKIP`/`MERGE` trên chuỗi P-frame dài.
+- **Chế độ `iwa_gop_qp_reuse`:** Chỉ chạy U-Net + ConvGRU ở I-frame (`t mod 32 = 0`), còn 31 P-frame chạy nhánh tinh chỉnh nhẹ `inter_refine` tại `H/2`, tiết kiệm **`96.72%` GMACs lý thuyết** (`96.78%` đo thực nghiệm) và đạt **`113.21 FPS`**.
 
-### 3.3. Phân bổ lượng tử hóa QG `40×24` có đệm bảo vệ `3×3` (`compute_ctu_qp_offsets`)
-- Trước khi gom xuống lưới Quantization Group `qg_size = 16` (`40×24` vùng tại `640×384`), bản đồ tiền cảnh đi qua bộ lọc cực đại `3×3` (*Foreground Halo Guard*) nhằm ngăn khối nền tăng QP sát rìa làm hỏng gradient biên vật thể.
-- Tín hiệu `qg_attn = 0.62 * avg_qg + 0.38 * max_qg` điều khiển độ lệch lượng tử nền không âm `ΔQP ∈ [0, 4.0]` (ánh xạ sang `addroi qoffset` có gộp run-length ngang) và kế thừa an toàn qua các P-frame trong GOP.
+### 3.3. Nhánh không gian & Phân bổ QG `40×24` có viền bảo vệ `3×3` (`compute_ctu_qp_offsets`)
+- Mặt nạ tiền cảnh hiệu dụng `A_eff` (Smoothstep STE bảo vệ đối tượng khỏi rò rỉ làm mờ) đi qua bộ lọc cực đại **`3×3` Foreground Halo Guard** trước khi gom về lưới Quantization Group `16×16 px` (`40×24` ô tại `640×384`):
+  - `A_QG = 0.50 * AvgPool_16(A_guard) + 0.50 * MaxPool_16(A_guard)`.
+  - Bất kỳ pixel tiền cảnh nào `>= 0.76` sẽ đẩy `A_QG >= 0.38 = τ`, khóa cứng `ΔQP_fg = 0.0`.
+  - Vùng nền (`A_QG < 0.38`) nhận độ lệch lượng tử không âm **`ΔQP ∈ [0.0, +7.14]`** (`qoffset = ΔQP / 51 ∈ [0.00, +0.14]`) kèm kế thừa đơn điệu an toàn qua các P-frame.
 
-### 3.4. Huấn luyện Hybrid Real-Codec STE một Teacher duy nhất (`Single-Teacher`)
-- Nhánh forward gọi trực tiếp `ffmpeg libx265 -pix_fmt yuv420p` để mô hình thấy đúng nhiễu lượng tử và dự đoán liên khung thật; nhánh backward truyền đạo hàm qua `DifferentiableVideoProxy`.
-- Hàm mất mát [`VCMTemporalPreEditLoss`](./losses/vcm_temporal_loss.py) chỉ dùng **duy nhất `Faster R-CNN ResNet50-FPN v2`** đóng băng (`{p2, p3, p4, p5}`), kết hợp mất mát bảo toàn ROI người đi bộ, Tversky + BCE cho mặt nạ chú ý, ước lượng bitrate tách riêng I/P và ràng buộc ổn định nền liên khung.
-
----
-
-## 4. Cấu trúc mã nguồn và Quy trình thực thi
-
-```text
-├── README.md
-├── TCSVT_Paper_Blueprint.md            # Bản thiết kế toán học & giao thức thực nghiệm v3
-├── paper/                              # Bản thảo bài báo IEEEtran 12 trang
-│   ├── main.tex                        # Nguồn LaTeX chính (nạp tự động macros & tables)
-│   ├── main.pdf                        # Bản PDF biên dịch hoàn chỉnh
-│   ├── references.bib                  # Tài liệu tham khảo BibTeX
-│   ├── metrics_macros.tex              # Macro số liệu sinh tự động từ JSON
-│   └── tables_generated.tex            # Các bảng kết quả LaTeX sinh tự động
-├── docs/
-│   ├── V3_Q1_BENCHMARK_REPORT.md       # Báo cáo chi tiết toàn bộ bảng thực nghiệm Q1
-│   ├── soup_connectivity_report.json   # Kiểm định Linear Mode Connectivity trên MOT17-09
-│   └── figures/                        # Sơ đồ kiến trúc & đường cong Rate-Accuracy
-├── models/
-│   ├── temporal_scope.py               # TemporalSCOPE v3 (6.11M params), IRLS, P-frame bypass, Halo Guard
-│   └── frozen_detector_fpn.py          # Trình bao Faster R-CNN FPN & đánh giá đa detector theo chunk
-├── video_codecs/
-│   └── hybrid_x265_ste.py              # Hybrid libx265/libx264 (yuv420p, LDP/RA GOP=32) + Differentiable Proxy
-├── losses/
-│   └── vcm_temporal_loss.py            # Hàm mất mát VCM Single-Teacher ổn định FP32/AMP
-├── vcm_datasets/
-│   └── vcm_video_datasets.py           # Bộ nạp dữ liệu MOT17, MOT20, KITTI Tracking, HEVC Class B (640×384)
-├── release_ckpts/                      # 5 Uniform Model Soups đã xác thực SHA-256 & Mode Connectivity
-├── scripts/
-│   ├── experiment_protocol.py          # Hợp đồng giao thức schema_version=3 & kiểm định giả thuyết C01–C05
-│   ├── kaggle_pool_orchestrator.py     # Điều phối song song đa tài khoản Kaggle T4
-│   ├── kaggle_shard_runner.py          # Huấn luyện & đánh giá phân mảnh (train / eval_soup)
-│   ├── validate_soups.py               # Kiểm định Uniform Soup vs. Greedy Soup vs. Constituent trên MOT17-09
-│   ├── eval_cross_backbone_bdbr.py     # Đánh giá 5 kiến trúc detector, libx264 & Random Access (IBBP)
-│   ├── eval_sota_and_tracking.py       # Đối chứng SCOPE gốc, ByteTrack (MOTA/IDF1/HOTA), MOT20/KITTI & FPS/GMACs
-│   ├── merge_shards.py                 # Gộp Model Soup & tính PCHIP BDBR + 10,000 Bootstrap 95% CI
-│   └── sync_paper_tables.py            # Đồng bộ tự động JSON -> LaTeX, docs và README
-└── tests/                              # 55 bài kiểm thử đơn vị bảo vệ hợp đồng toán học & dữ liệu
-```
-
-### Quy trình tái lập từ đầu đến cuối
-
-```powershell
-# 1. Chạy toàn bộ 55 bài kiểm thử hợp đồng kỹ thuật v3
-pytest -q
-
-# 2. Huấn luyện cân bằng 15 shard (3 shards × 5 variants, 640×384, Single-Teacher Faster R-CNN)
-python -I scripts/kaggle_pool_orchestrator.py --pool_file "<path/to/pool.json>" --action push --run_mode train --ablation_sweep --expected_shards 15 --git_revision "<40_CHAR_SHA>"
-
-# 3. Thu thập shard, tạo 5 Uniform Model Soups và kiểm định Mode Connectivity trên tập val MOT17-09
-python -I scripts/kaggle_pool_orchestrator.py --pool_file "<path/to/pool.json>" --action pull --run_mode train
-python -I scripts/merge_shards.py --action soup --manifest "<train_manifest.json>" --ckpt_dir ./outputs_kaggle_pool/prepared_soups_v3 --expected_shards 15
-python -I scripts/kaggle_pool_orchestrator.py --pool_file "<path/to/pool.json>" --action push --run_mode validate_soups --git_revision "<40_CHAR_SHA>"
-
-# 4. Chạy song song 3 cụm đánh giá Phase 3 (eval_soup + eval_cross_backbone + eval_sota_and_tracking)
-python -I scripts/kaggle_pool_orchestrator.py --pool_file "<path/to/pool.json>" --action push --run_mode eval_soup --expected_shards 12 --git_revision "<PHASE3_SHA>"
-python -I scripts/kaggle_pool_orchestrator.py --pool_file "<path/to/pool.json>" --action push --run_mode eval_cross_backbone --expected_shards 1 --git_revision "<PHASE3_SHA>"
-python -I scripts/kaggle_pool_orchestrator.py --pool_file "<path/to/pool.json>" --action push --run_mode eval_sota_and_tracking --expected_shards 4 --sota_task_split "sota,tracking,second_dataset,complexity" --extra_dataset_slugs ismailelbouknify/mot-20 leducnhuan/kitti-tracking --git_revision "<PHASE3_SHA>"
-
-# 5. Tổng hợp PCHIP BDBR + 10,000 Bootstrap 95% CI và tự động đồng bộ LaTeX + Báo cáo + README
-python -I scripts/merge_shards.py --action eval --manifest "<eval_manifest.json>" --eval_dir ./outputs_kaggle_pool/eval_v3_final --ckpt_dir ./release_ckpts --expected_shards 12
-python -I scripts/sync_paper_tables.py --pool-dir ./outputs_kaggle_pool
-```
+### 3.4. Huấn luyện Hybrid Real-Codec STE một giáo viên duy nhất
+- Lượt tiến gọi trực tiếp `libx265` / `libx264` chuẩn `yuv420p`; lượt truyền ngược truyền gradient qua proxy khả vi `8×8 DCT + 16×16 MC` khớp họ codec và lưới QG.
+- Giám sát duy nhất bằng `Faster R-CNN ResNet50-FPN v2` đóng băng (`{P2, P3, P4, P5}`).
 
 ---
+
+## 4. Kết quả Thực nghiệm Chuẩn Hóa
 
 <!-- BEGIN_V3_BENCHMARKS -->
 ## 5. Verified T-SCOPE v3 Q1 Benchmark Summary (Auto-Synced via `scripts/sync_paper_tables.py`)
@@ -161,13 +87,60 @@ Source manifest SHA-256: `15fbc3d5438657b2388db742fe6e3fdf63c98b62d3cccefde90618
 - **ByteTrack Multi-Object Tracking BDBR:** `MOTA` = +15.53%, `IDF1` = -0.71%, `HOTA` = -2.22%.
 <!-- END_V3_BENCHMARKS -->
 
+### 5.1. Đối chứng SOTA ngoại vi trên `MOT17` (`1,632` frames, `51` GOPs 32 khung, `yuv420p`)
+
+| Phương pháp | Nhóm tiếp cận | Tot BDBR `FRCNN AP@50` (95% CI) | P-BDBR `FRCNN AP@50` | Tot BDBR `FRCNN AP@50:95` | Zero-Shot `YOLOv8s AP@50` |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `Direct libx265 Anchor` | Chuẩn HEVC 4:2:0 | `+0.00%` | `+0.00%` | `+0.00%` | `+0.00%` |
+| `Compressed-Domain FT FRCNN` | Tinh chỉnh Detector | `+83.12%` (`[+49.0, +111.2]`) | `+88.81%` | `+84.02%` | `--` |
+| `Deterministic Blur + EMA` | Lọc mờ không học | `+44.26%` (`[+31.9, +56.6]`) | `+48.82%` | `+38.94%` | `+53.60%` |
+| `MPEG-VCM Spatial Resampling` | Co giãn phân giải CTC | `+19.67%` (`[+8.2, +30.7]`) | `+22.39%` | `+2.38%` | `+5.44%` |
+| `Official SCOPE` (`miccunifi/SCOPE`) | SOTA tiền xử lý ảnh tĩnh | `+2.11%` (`[-6.3, +8.5]`) | `+2.67%` | `-2.25%` | `+5.29%` |
+| `Detector-ROI addroi` | Cần chạy Detector ở Encoder | `-8.91%` (`[-15.1, -3.4]`) | `-7.92%` | `-12.59%` | `-9.65%` |
+| **`T-SCOPE IWA-Bypass` (`113.2 FPS`)** | **Keyframe + P-Bypass** | **`-11.92%`** (`[-18.9, -6.0]`) | **`-11.38%`** | `-8.24%` | `-17.49%` |
+| **`T-SCOPE Full` (Ours)** | **MC + Halo QG P-Carry** | **`-8.87%`** (`[-13.4, -4.4]`) | **`-8.40%`** | **`-10.09%`** | **`-21.87%`** |
+
+![BDBR Rate-Accuracy Curves](./docs/figures/fig_bdbr_curves.png)
+
+![De-Confounded Ablation BDBR](./docs/figures/fig_ablation_bdbr.png)
+
+### 5.2. Chuyển giao Zero-Shot sang 4 Detector ẩn, Swin-T ViT, `libx264` & `HEVC Random Access`
+
+Toàn bộ kết quả từ [`outputs_kaggle_pool/cross_backbone_bdbr.json`](./outputs_kaggle_pool/cross_backbone_bdbr.json) (cận trên 95% CI đều `< 0%` trên mọi cặp):
+
+| Chế độ Codec & GOP | Kiến trúc Downstream | Vai trò | `Spatial-Only` (`AP@50`) | **`T-SCOPE Full` (`AP@50` + 95% CI)** | `T-SCOPE` P-BDBR | `T-SCOPE` (`AP@50:95`) | `Feat-SNR` BDBR |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **HEVC LDP** (`x265`, `B=0`) | `Faster R-CNN R50-FPN v2` | Teacher | `-9.79%` | `-8.87%` (`[-13.4, -4.4]`) | `-8.40%` | **`-10.09%`** | `+0.01%` |
+| **HEVC LDP** (`x265`, `B=0`) | `YOLOv8s` (CSPDarknet) | **Zero-Shot** | `-15.73%` | **`-21.87%`** (`[-27.9, -15.7]`) | `-22.08%` | **`-16.30%`** | `-4.56%` |
+| **HEVC LDP** (`x265`, `B=0`) | `RetinaNet R50-FPN v2` | **Zero-Shot** | `-8.78%` | **`-9.40%`** (`[-12.9, -5.5]`) | `-8.96%` | **`-8.85%`** | `+1.76%` |
+| **HEVC LDP** (`x265`, `B=0`) | `FCOS R50-FPN` | **Zero-Shot** | `-14.41%` | **`-14.74%`** (`[-18.2, -10.2]`) | `-14.60%` | **`-13.85%`** | `+4.29%` |
+| **HEVC LDP** (`x265`, `B=0`) | `SSDLite MobileNetV3` | **Zero-Shot** | `-12.29%` | **`-14.05%`** (`[-26.8, -0.5]`) | `-13.86%` | **`-13.95%`** | `+18.50%` |
+| **HEVC LDP** (`x265`, `B=0`) | `Swin-T ViT` | **Zero-Shot Feat** | `--` | `--` | `--` | `--` | **`-5.02%`** |
+| **AVC LDP** (`libx264`, `f=1`) | `Faster R-CNN R50-FPN v2` | In-Domain | `-9.04%` | **`-15.57%`** (`[-18.7, -10.6]`) | `-15.51%` | **`-13.91%`** | `-1.98%` |
+| **AVC LDP** (`libx264`, `f=1`) | `YOLOv8s` | **Zero-Shot** | `-13.03%` | **`-13.48%`** (`[-17.6, -10.2]`) | `-13.36%` | **`-12.73%`** | `-5.48%` |
+| **AVC LDP** (`libx264`, `f=1`) | `RetinaNet R50-FPN v2` | **Zero-Shot** | `-9.56%` | **`-13.91%`** (`[-16.6, -11.0]`) | `-13.78%` | **`-13.41%`** | `-2.40%` |
+| **HEVC RA** (`x265 IBBP`, `B=4`) | `Faster R-CNN R50-FPN v2` | In-Domain | `-15.22%` | `-14.49%` (`[-19.9, -9.9]`) | `-13.90%` | `-11.02%` | `-0.48%` |
+| **HEVC RA** (`x265 IBBP`, `B=4`) | `YOLOv8s` | **Zero-Shot** | `-19.71%` | **`-21.47%`** (`[-26.2, -12.9]`) | `-21.40%` | **`-17.29%`** | `-5.38%` |
+| **HEVC RA** (`x265 IBBP`, `B=4`) | `RetinaNet R50-FPN v2` | **Zero-Shot** | `-11.33%` | `-10.74%` (`[-14.6, -6.1]`) | `-9.85%` | `-11.41%` | `-1.83%` |
+
+### 5.3. Theo dõi đa đối tượng (`ByteTrack`) & Đa tập dữ liệu (`MOT20`, `KITTI`)
+
+| Phương pháp | `MOTA` BDBR | `IDF1` BDBR | `HOTA` BDBR | Zero-Shot `MOT20` (`mAP@50` BDBR) | Zero-Shot `KITTI` 4 lớp (`mAP@50` BDBR) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `Direct libx265 Anchor` | `+0.00%` | `+0.00%` | `+0.00%` | `+0.00%` | `+0.00%` |
+| `T-SCOPE Spatial-Only` | `+26.63%` *(suy giảm)* | `+6.68%` *(suy giảm)* | `+5.76%` *(suy giảm)* | `-19.62%` | `-13.55%` |
+| **`T-SCOPE IWA-Bypass` (`K=32`)** | **`+0.75%`** | **`-0.16%`** | **`-3.22%`** | `-5.39%` | **`-8.70%`** |
+| **`T-SCOPE Full` (Ours)** | `+15.53%` | **`-0.71%`** | **`-2.22%`** | **`-12.72%`** | **`-8.40%`** |
+
+### 5.4. Trực quan hóa Định tính trên `MOT17-11` và `MOT17-13` (`CRF = 37`)
+
+![Qualitative Results](./docs/figures/fig_qualitative_v3.png)
+
 ---
 
-## 6. Kiểm định Linear Mode Connectivity & Hiệu năng phần cứng Tesla T4 (Đã hoàn tất)
+## 6. Kiểm định Linear Mode Connectivity & Hiệu năng phần cứng Tesla T4
 
 ### 6.1. Kiểm định Model Soup trên tập Validation `MOT17-09` ([`docs/soup_connectivity_report.json`](./docs/soup_connectivity_report.json))
-
-Đo trực tiếp với luồng nén thật `libx265 -pix_fmt yuv420p` tại `640×384` (`held_out_test_used = false`, không chọn lọc trên tập test):
 
 | Biến thể (`release_ckpts/tscope_soup_<variant>.pt`) | Uniform Soup Loss | Trung bình ± Độ lệch chuẩn 3 Shard lẻ | Greedy Soup Loss (Shard chọn) | Liên thông tuyến tính (`Uniform <= Mean`) |
 | :--- | :---: | :---: | :---: | :---: |
@@ -177,11 +150,64 @@ Source manifest SHA-256: `15fbc3d5438657b2388db742fe6e3fdf63c98b62d3cccefde90618
 | **`wo_x265_ste_proxy`** | **`3.7010`** | `3.8383 ± 0.1087` | `3.7010` (`[4, 9, 14]`) | **Đạt (`-0.1374`)** |
 | `spatial_only_scope` | `3.9920` | `3.9760 ± 0.0967` | `3.8933` (`[12]`) | `Không` |
 
-### 6.2. Độ phức tạp tính toán & Tốc độ thực tế trên GPU NVIDIA Tesla T4 (`640×384`, `GOP = 32`)
+### 6.2. Độ trễ GPU (NVIDIA Tesla T4) & Thời gian Mã hóa + Giải mã CPU thực tế (`640×384`, `GOP = 32`)
 
-| Cấu hình / Thành phần | Tham số | GMACs / Frame | Độ trễ TB (`ms/frame`) | Độ trễ P95 (`ms/frame`) | Tốc độ (`FPS`) | VRAM Đỉnh (`MB`) |
+| Thành phần / Chế độ vận hành | Tham số | GMACs / Frame | Mean (`ms/f`) | P95 (`ms/f`) | Tốc độ (`FPS`) | VRAM Đỉnh / Bitrate (`CRF 32`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `full_tscope` (Chạy đầy đủ mọi frame) | `6.11M` | `137.71` | `180.05` | `--` | `5.55 FPS` | `1336.78` |
-| `spatial_only_scope` (Độc lập từng frame) | `6.11M` | `137.71` | `174.49` | `--` | `5.73 FPS` | `~1336` |
-| **`iwa_gop_qp_reuse` (Bypass P-frame `v3`)** | **`6.11M`** | **`4.43` (`-96.78%`)** | **`8.83`** | **`9.08`** | **`113.21 FPS` (`20.4×`)** | **`1325.53`** |
-| Riêng khối `6-DOF Cauchy-IRLS Motion` | `0` | `--` | `1.35` | `--` | **`741.84 FPS`** | `342.63` |
+| Riêng khối `6-DOF Cauchy-IRLS` | `0` | `0.10` | `1.35` | `1.51` | **`741.84 FPS`** | `342.6 MB` |
+| **`T-SCOPE IWA-Bypass` (`K=32`, `-96.78%` GMACs)** | **`6.109M`** | **`4.43`** | **`8.83`** | **`9.08`** | **`113.21 FPS` (`20.4×`)** | **`1325.5 MB`** |
+| `T-SCOPE Spatial-Only` (`B=0` MC) | `6.109M` | `137.58` | `174.49` | `176.38` | `5.73 FPS` | `974.1 MB` |
+| `T-SCOPE Full` (U-Net + MC mọi frame) | `6.109M` | `137.71` | `180.05` | `184.69` | `5.55 FPS` | `1336.8 MB` |
+| `Official SCOPE` (`miccunifi/SCOPE`) | `1.879M` | `86.56` | `100.17` | `101.17` | `9.98 FPS` | `7991.9 MB` |
+| CPU Encode+Decode: `libx265` Anchor | `libx265` | `--` | `66.19` | `--` | `15.11 FPS` | `0.0621 bpp` |
+| CPU Encode+Decode: `T-SCOPE IWA` Static `addroi` | `libx265` | `--` | **`58.22`** | `--` | **`17.18 FPS`** | **`0.0604 bpp`** |
+| CPU Encode+Decode: `T-SCOPE Full` Dynamic `addroi` | `libx265` | `--` | `61.12` | `--` | `16.36 FPS` | `0.0614 bpp` |
+| CPU Encode+Decode: `libx264` Anchor | `libx264` | `--` | `50.76` | `--` | `19.70 FPS` | `0.0424 bpp` |
+| CPU Encode+Decode: `T-SCOPE Full` `libx264 addroi` | `libx264` | `--` | `52.69` | `--` | `18.98 FPS` | `0.0444 bpp` |
+
+---
+
+## 7. Cấu trúc thư mục & Tái lập thực nghiệm
+
+```text
+├── README.md
+├── paper/                              # Bản thảo bài báo IEEEtran (Tiếng Anh & Tiếng Việt)
+│   ├── main.tex / main.pdf             # Bản thảo Tiếng Anh (14 trang)
+│   ├── main_vi.tex / main_vi.pdf       # Bản thảo Tiếng Việt (8 trang)
+│   ├── references.bib                  # Tài liệu tham khảo BibTeX
+│   ├── metrics_macros.tex              # Macro số liệu sinh tự động từ JSON
+│   └── tables_generated.tex            # Các bảng LaTeX sinh tự động từ JSON
+├── docs/
+│   ├── V3_Q1_BENCHMARK_REPORT.md       # Báo cáo chi tiết toàn bộ bảng thực nghiệm
+│   ├── soup_connectivity_report.json   # Kiểm định Linear Mode Connectivity trên MOT17-09
+│   └── figures/                        # Kịch bản & hình vẽ kiến trúc, BDBR, ablation, định tính
+├── models/
+│   ├── temporal_scope.py               # TemporalSCOPE (6.11M params), 6-DOF IRLS, IWA P-bypass, Halo QG
+│   └── frozen_detector_fpn.py          # Faster R-CNN FPN teacher & đánh giá đa detector
+├── video_codecs/
+│   └── hybrid_x265_ste.py              # Hybrid libx265/libx264 (yuv420p, LDP/RA GOP=32) + Proxy STE
+├── losses/
+│   └── vcm_temporal_loss.py            # Hàm mất mát VCM Single-Teacher ổn định FP32/AMP
+├── vcm_datasets/
+│   └── vcm_video_datasets.py           # Bộ nạp dữ liệu MOT17, MOT20, KITTI (640×384, 16:9)
+├── outputs_kaggle_pool/
+│   ├── merged_benchmarks.json          # Kết quả gộp 12 shard + 10k clip-bootstrap 95% CI
+│   └── cross_backbone_bdbr.json        # Kết quả gộp 3 chế độ × 6 kiến trúc Cross-Backbone/Codec
+├── release_ckpts/                      # 5 Uniform Model Soups phát hành kèm SHA-256
+├── scripts/                            # Điều phối Kaggle, đánh giá, vẽ hình và đồng bộ bảng tự động
+└── tests/                              # 55 bài kiểm thử đơn vị bảo vệ hợp đồng toán học & dữ liệu
+```
+
+### Lệnh kiểm tra & đồng bộ nhanh
+
+```powershell
+# 1. Chạy toàn bộ bộ kiểm thử đơn vị
+python -m pytest -q
+
+# 2. Tái tạo hình vẽ kiến trúc & đường cong BDBR từ JSON thực nghiệm
+python docs/figures/gen_fig_pipeline_overview.py
+python scripts/gen_fig_bdbr_curves.py --benchmark outputs_kaggle_pool/merged_benchmarks.json --output-dir docs/figures
+
+# 3. Đồng bộ tự động JSON -> LaTeX macros/tables, docs/V3_Q1_BENCHMARK_REPORT.md và README.md
+python scripts/sync_paper_tables.py
+```
