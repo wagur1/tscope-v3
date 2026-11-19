@@ -18,9 +18,9 @@ MPEG-VCM Spatial Resampling & Down/Upscale CTC & +19.67\% {\scriptsize $[+8.2,+3
 Detector-ROI \texttt{addroi} & Codec QG Only & -8.91\% {\scriptsize $[-15.1,-3.4]$} & -7.92\% & -12.59\% & -11.83\% & -9.65\% & -13.90\% \\
 Compressed-Domain FT FRCNN & Adapted Detector & +83.12\% {\scriptsize $[+49.0,+111.2]$} & +88.81\% & +84.02\% & +89.79\% & -- & -- \\
 Official SCOPE~\cite{dani2026scope} & External Image SOTA & +2.11\% {\scriptsize $[-6.3,+8.5]$} & +2.67\% & -2.25\% & -1.92\% & +5.29\% & +1.83\% \\
-T-SCOPE Spatial-Only & Framewise Pre-Edit & -9.80\% {\scriptsize $[-14.9,-5.9]$} & -9.74\% & -9.56\% & -9.49\% & -15.73\% & -12.58\% \\
-T-SCOPE IWA-Bypass ($K{=}32$) & Keyframe + P-Bypass & -11.92\% {\scriptsize $[-18.9,-6.0]$} & -11.38\% & -8.24\% & -7.48\% & -17.49\% & -9.87\% \\
-\textbf{T-SCOPE Full (Ours)} & MC + QG P-Carry & \textbf{-8.87\%} {\scriptsize $[-13.4,-4.4]$} & \textbf{-8.40\%} & -10.09\% & -9.70\% & -21.87\% & -16.30\% \\
+\midrule
+\textbf{T-SCOPE IWA-Bypass ($K{=}32$, Ours)} & Keyframe + P-Bypass & \textbf{-11.92\%} {\scriptsize $[-18.9,-6.0]$} & \textbf{-11.38\%} & -8.24\% & -7.48\% & -17.49\% & -9.87\% \\
+\textbf{T-SCOPE Full (Ours)} & MC + QG P-Carry & \textbf{-8.87\%} {\scriptsize $[-13.4,-4.4]$} & \textbf{-8.40\%} & -10.09\% & -9.70\% & \textbf{-21.87\%} & \textbf{-16.30\%} \\
 \bottomrule
 \end{tabular}%
 }
@@ -37,8 +37,8 @@ T-SCOPE IWA-Bypass ($K{=}32$) & Keyframe + P-Bypass & -11.92\% {\scriptsize $[-1
 \textbf{Ablation Variant} & \textbf{MC+GRU} & \textbf{Codec STE} & \textbf{QG dQP} & \textbf{P-Carry} & \textbf{Val Loss} & \textbf{Tot BDBR} & \textbf{P-Frame BDBR} & \textbf{Tot BDBR} & \textbf{YOLO (ZS)} & \textbf{MOT17-11} & \textbf{MOT17-13} \\
  & & & ($16{\times}16$) & & (Unif.) & \textbf{FR50} & \textbf{FR50} & \textbf{FR50:95} & \textbf{Tot AP50} & \textbf{Tot FR50} & \textbf{Tot FR50} \\
 \midrule
-\textbf{Full T-SCOPE} & \checkmark & \checkmark & \checkmark & Dynamic & 3.782 & \textbf{-8.87\%} {\scriptsize $[-13.4,-4.4]$} & -8.40\% & -10.09\% & -21.87\% & -16.60\% & -6.50\% \\
-\texttt{iwa\_gop\_qp\_reuse} & \checkmark & P-Bypass & \checkmark & Keyframe & 3.831 & -11.92\% {\scriptsize $[-18.9,-6.0]$} & -11.38\% & -8.24\% & -17.49\% & -12.32\% & -11.93\% \\
+\textbf{T-SCOPE Full (Ours)} & \checkmark & \checkmark & \checkmark & Dynamic & 3.782 & \textbf{-8.87\%} {\scriptsize $[-13.4,-4.4]$} & -8.40\% & -10.09\% & -21.87\% & -16.60\% & -6.50\% \\
+\textbf{T-SCOPE IWA-Bypass (Ours)} & \checkmark & P-Bypass & \checkmark & Keyframe & 3.831 & \textbf{-11.92\%} {\scriptsize $[-18.9,-6.0]$} & -11.38\% & -8.24\% & -17.49\% & -12.32\% & -11.93\% \\
 \texttt{wo\_ctu\_delta\_qp} & \checkmark & \checkmark & -- & -- & 3.760 & -6.24\% {\scriptsize $[-13.0,-2.0]$} & -5.76\% & -5.77\% & -15.10\% & -17.86\% & -5.85\% \\
 \texttt{spatial\_only\_scope} & -- & \checkmark & -- & -- & 3.992 & -9.80\% {\scriptsize $[-14.9,-5.9]$} & -9.74\% & -9.56\% & -15.73\% & -13.83\% & -8.89\% \\
 \texttt{wo\_x265\_ste\_proxy} & \checkmark & Proxy Only & \checkmark & Dynamic & 3.701 & -6.03\% {\scriptsize $[-11.8,-1.7]$} & -5.47\% & -7.66\% & -9.49\% & -14.06\% & -5.08\% \\
@@ -95,12 +95,9 @@ HEVC RA (\texttt{x265}, $B{=}4$) & RetinaNet (Zero-Shot) & Zero-Shot & -11.33\% 
  & \textbf{MOTA (\%)} & \textbf{HOTA (\%)} & \textbf{IDSW $\downarrow$} & \textbf{MOTA} & \textbf{IDF1} & \textbf{HOTA} & \textbf{Tot mAP@50} & \textbf{Tot mAP@50} \\
 \midrule
 Direct \texttt{libx265} Anchor & 38.00 & 43.32 & 222 & +0.00\% & +0.00\% & +0.00\% & +0.00\% & +0.00\% \\
-MPEG-VCM Spatial Resampling & -- & -- & -- & -- & -- & -- & -- & -- \\
-Detector-ROI \texttt{addroi} & -- & -- & -- & -- & -- & -- & -- & -- \\
-Official SCOPE~\cite{dani2026scope} & -- & -- & -- & -- & -- & -- & -- & -- \\
-T-SCOPE Spatial-Only & 38.70 & 42.70 & 203 & +26.63\% & +6.68\% & +5.76\% & -19.62\% & -13.55\% \\
-T-SCOPE IWA-Bypass ($K{=}32$) & 39.12 & 43.17 & 262 & +0.75\% & -0.16\% & -3.22\% & -5.39\% & -8.70\% \\
-\textbf{T-SCOPE Full (Ours)} & 38.55 & 42.33 & 283 & +15.53\% & -0.71\% & \textbf{-2.22\%} & -12.72\% & -8.40\% \\
+T-SCOPE Spatial-Only (Ablation) & 38.70 & 42.70 & 203 & +26.63\% & +6.68\% & +5.76\% & -19.62\% & -13.55\% \\
+\textbf{T-SCOPE IWA-Bypass ($K{=}32$, Ours)} & 39.12 & 43.17 & 262 & +0.75\% & \textbf{-0.16\%} & \textbf{-3.22\%} & -5.39\% & -8.70\% \\
+\textbf{T-SCOPE Full (Ours)} & 38.55 & 42.33 & 283 & +15.53\% & \textbf{-0.71\%} & \textbf{-2.22\%} & -12.72\% & -8.40\% \\
 \bottomrule
 \end{tabular}%
 }

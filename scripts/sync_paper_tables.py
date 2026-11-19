@@ -586,6 +586,7 @@ def render_tables_generated_tex(
         primary: Optional[Dict[str, Any]],
         fallback: Optional[Dict[str, Any]] = None,
         bold: bool = False,
+        bold_yolo: bool = False,
     ) -> str:
         src = primary if (primary and primary.get("per_qp")) else (fallback or {})
         tot_fr50 = _fmt_pct_with_ci(
@@ -601,10 +602,15 @@ def render_tables_generated_tex(
         tot_yo95 = _resolve_yolo_bdbr(src, "yolo_gt_ap50_95_pct", "bdbr_tot_yolo_gt_ap50_95_pct", tex=True)
         if bold and p_fr50 != r"\texttt{TBD}":
             p_fr50 = f"\\textbf{{{p_fr50}}}"
+        if bold_yolo:
+            if tot_yo50 not in (r"\texttt{TBD}", "--"):
+                tot_yo50 = f"\\textbf{{{tot_yo50}}}"
+            if tot_yo95 not in (r"\texttt{TBD}", "--"):
+                tot_yo95 = f"\\textbf{{{tot_yo95}}}"
         lbl = f"\\textbf{{{label}}}" if bold else label
         return f"{lbl} & {category} & {tot_fr50} & {p_fr50} & {tot_fr95} & {p_fr95} & {tot_yo50} & {tot_yo95} \\\\"
 
-    # 1. Table II: Main SOTA & Baseline Comparison
+    # 1. Table II: Main SOTA & Baseline Comparison (External/Standard Baselines vs. Dual-Mode T-SCOPE)
     t2_rows = [
         _sota_or_ov_row(r"Direct \texttt{libx265} Anchor", "Standard HEVC 4:2:0", ov.get("anchor_x265"), sota_m.get("anchor_x265")),
         _sota_or_ov_row("Deterministic Blur + EMA", "Non-Learned Filter", ov.get("deterministic_blur_ema")),
@@ -612,15 +618,15 @@ def render_tables_generated_tex(
         _sota_or_ov_row(r"Detector-ROI \texttt{addroi}", "Codec QG Only", sota_m.get("detector_roi_codec_addroi")),
         _sota_or_ov_row("Compressed-Domain FT FRCNN", "Adapted Detector", sota_m.get("compressed_video_finetuned_frcnn")),
         _sota_or_ov_row(r"Official SCOPE~\cite{dani2026scope}", "External Image SOTA", sota_m.get("official_miccunifi_scope")),
-        _sota_or_ov_row("T-SCOPE Spatial-Only", "Framewise Pre-Edit", ab.get("spatial_only_scope"), sota_m.get("tscope_spatial_only")),
-        _sota_or_ov_row(r"T-SCOPE IWA-Bypass ($K{=}32$)", "Keyframe + P-Bypass", ab.get("iwa_gop_qp_reuse"), sota_m.get("tscope_iwa_gop_qp_reuse")),
-        _sota_or_ov_row("T-SCOPE Full (Ours)", "MC + QG P-Carry", ab.get("full_tscope"), sota_m.get("tscope_full"), bold=True),
+        r"\midrule",
+        _sota_or_ov_row(r"T-SCOPE IWA-Bypass ($K{=}32$, Ours)", "Keyframe + P-Bypass", ab.get("iwa_gop_qp_reuse"), sota_m.get("tscope_iwa_gop_qp_reuse"), bold=True),
+        _sota_or_ov_row("T-SCOPE Full (Ours)", "MC + QG P-Carry", ab.get("full_tscope"), sota_m.get("tscope_full"), bold=True, bold_yolo=True),
     ]
 
     # 2. Table III: De-Confounded 5-Variant Ablation + Per-Sequence + Pre-Registered Claims
     ab_specs = [
-        ("full_tscope", r"\textbf{Full T-SCOPE}", r"\checkmark", r"\checkmark", r"\checkmark", "Dynamic", True),
-        ("iwa_gop_qp_reuse", r"\texttt{iwa\_gop\_qp\_reuse}", r"\checkmark", r"P-Bypass", r"\checkmark", "Keyframe", False),
+        ("full_tscope", r"\textbf{T-SCOPE Full (Ours)}", r"\checkmark", r"\checkmark", r"\checkmark", "Dynamic", True),
+        ("iwa_gop_qp_reuse", r"\textbf{T-SCOPE IWA-Bypass (Ours)}", r"\checkmark", r"P-Bypass", r"\checkmark", "Keyframe", True),
         ("wo_ctu_delta_qp", r"\texttt{wo\_ctu\_delta\_qp}", r"\checkmark", r"\checkmark", "--", "--", False),
         ("spatial_only_scope", r"\texttt{spatial\_only\_scope}", "--", r"\checkmark", "--", "--", False),
         ("wo_x265_ste_proxy", r"\texttt{wo\_x265\_ste\_proxy}", r"\checkmark", "Proxy Only", r"\checkmark", "Dynamic", False),
@@ -739,28 +745,29 @@ def render_tables_generated_tex(
         ("mpeg_vcm_spatial_resampling", "MPEG-VCM Spatial Resampling", False),
         ("detector_roi_codec_addroi", "Detector-ROI \\texttt{addroi}", False),
         ("official_miccunifi_scope", "Official SCOPE~\\cite{dani2026scope}", False),
-        ("tscope_spatial_only", "T-SCOPE Spatial-Only", False),
-        ("tscope_iwa_gop_qp_reuse", "T-SCOPE IWA-Bypass ($K{=}32$)", False),
+        ("tscope_spatial_only", "T-SCOPE Spatial-Only (Ablation)", False),
+        ("tscope_iwa_gop_qp_reuse", "\\textbf{T-SCOPE IWA-Bypass ($K{=}32$, Ours)}", True),
         ("tscope_full", "\\textbf{T-SCOPE Full (Ours)}", True),
     ]
     for m_key, m_lbl, is_b in trk_methods:
         te = trk.get(m_key, {})
         if trk and not te:
-            mota_27 = hota_27 = idsw_27 = b_mota = b_idf1 = b_hota = "--"
-        else:
-            q27 = te.get("per_qp", {}).get("27", {})
-            mota_27 = _fmt_num(q27.get("mota_pct"), digits=2, tex=True)
-            hota_27 = _fmt_num(q27.get("hota_pct"), digits=2, tex=True)
-            idsw_27 = str(int(q27["idsw"])) if isinstance(q27.get("idsw"), int) else r"\texttt{TBD}"
-            b_mota = _fmt_pct(te.get("bdbr_tot_mota_pct"), tex=True)
-            b_idf1 = _fmt_pct(te.get("bdbr_tot_idf1_pct"), tex=True)
-            b_hota = _fmt_pct(te.get("bdbr_tot_hota_pct"), tex=True)
+            continue
+        q27 = te.get("per_qp", {}).get("27", {})
+        mota_27 = _fmt_num(q27.get("mota_pct"), digits=2, tex=True)
+        hota_27 = _fmt_num(q27.get("hota_pct"), digits=2, tex=True)
+        idsw_27 = str(int(q27["idsw"])) if isinstance(q27.get("idsw"), int) else r"\texttt{TBD}"
+        b_mota = _fmt_pct(te.get("bdbr_tot_mota_pct"), tex=True)
+        b_idf1 = _fmt_pct(te.get("bdbr_tot_idf1_pct"), tex=True)
+        b_hota = _fmt_pct(te.get("bdbr_tot_hota_pct"), tex=True)
         m20_e = sec.get("mot20", {}).get("methods", {}).get(m_key, {})
         kit_e = sec.get("kitti", {}).get("methods", {}).get(m_key, {})
         b_m20 = _fmt_pct(m20_e.get("bdbr_tot_map50_pct"), tex=True) if m_key in ("anchor_x265", "tscope_spatial_only", "tscope_iwa_gop_qp_reuse", "tscope_full") else "--"
         b_kit = _fmt_pct(kit_e.get("bdbr_tot_map50_pct"), tex=True) if m_key in ("anchor_x265", "tscope_spatial_only", "tscope_iwa_gop_qp_reuse", "tscope_full") else "--"
         if is_b and b_hota != r"\texttt{TBD}":
             b_hota = f"\\textbf{{{b_hota}}}"
+        if is_b and b_idf1 != r"\texttt{TBD}":
+            b_idf1 = f"\\textbf{{{b_idf1}}}"
         t5_rows.append(
             f"{m_lbl} & {mota_27} & {hota_27} & {idsw_27} & {b_mota} & {b_idf1} & {b_hota} & {b_m20} & {b_kit} \\\\"
         )
@@ -948,8 +955,7 @@ def render_markdown_benchmark_report(
         ("`detector_roi_codec_addroi`", sota_m.get("detector_roi_codec_addroi"), None, False),
         ("`compressed_video_finetuned_frcnn`", sota_m.get("compressed_video_finetuned_frcnn"), None, False),
         ("`official_miccunifi_scope`", sota_m.get("official_miccunifi_scope"), None, False),
-        ("`spatial_only_scope`", ab.get("spatial_only_scope"), sota_m.get("tscope_spatial_only"), False),
-        ("`iwa_gop_qp_reuse`", ab.get("iwa_gop_qp_reuse"), sota_m.get("tscope_iwa_gop_qp_reuse"), False),
+        ("**`iwa_gop_qp_reuse` (Ours, 113.2 FPS)**", ab.get("iwa_gop_qp_reuse"), sota_m.get("tscope_iwa_gop_qp_reuse"), True),
         ("**`full_tscope` (Ours)**", ab.get("full_tscope"), sota_m.get("tscope_full"), True),
     ]
     anc_md_pqp = (ov.get("anchor_x265") or sota_m.get("anchor_x265") or {}).get("per_qp")
@@ -1149,7 +1155,7 @@ def build_readme_benchmark_snippet(
         ("`spatial_only_scope`", ab.get("spatial_only_scope", {}), False),
         ("`wo_x265_ste_proxy`", ab.get("wo_x265_ste_proxy", {}), False),
         ("`wo_ctu_delta_qp`", ab.get("wo_ctu_delta_qp", {}), False),
-        ("`iwa_gop_qp_reuse` (`-96.7%` GMACs)", ab.get("iwa_gop_qp_reuse", {}), False),
+        ("**`iwa_gop_qp_reuse` (`-96.7%` GMACs, Ours)**", ab.get("iwa_gop_qp_reuse", {}), True),
         ("**`full_tscope` (Ours)**", ab.get("full_tscope", {}), True),
     ]
     for lbl, src, bold in rows:
