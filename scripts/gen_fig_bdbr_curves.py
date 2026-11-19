@@ -32,7 +32,6 @@ METHOD_LABELS = {
     "deterministic_blur_ema": "Deterministic blur + EMA (non-learned)",
     "spatial_scope_framewise": "Spatial-only SCOPE (real STE, no QG offsets)",
     "tscope_temporal_ctu_qp": "Full T-SCOPE v3 (MC + ConvGRU + QG carry)",
-    "oracle_gt_mask_upper_bound": "Oracle GT mask (uses GT; not deployable)",
 }
 VARIANT_LABELS = {
     "full_tscope": "Full T-SCOPE (MC + ConvGRU + real STE + QG carry)",
@@ -236,6 +235,15 @@ def render_figures(bundle: Dict[str, Any], output_dir: Any) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     crfs = bundle["crfs"]
     curves = {k: extract_curve(bundle["overall_methods_summary"], k, crfs) for k in METHOD_LABELS}
+    curve_plot_items = list(METHOD_LABELS.items())
+    if "iwa_gop_qp_reuse" in bundle.get("ablation_variants_summary", {}):
+        curves["iwa_gop_qp_reuse"] = extract_curve(
+            bundle["ablation_variants_summary"], "iwa_gop_qp_reuse", crfs
+        )
+        curve_plot_items.insert(
+            3,
+            ("iwa_gop_qp_reuse", "IWA-GOP QP reuse (keyframe U-Net + P-bypass)"),
+        )
 
     # 2x2 figure restoring P-frame bpp & P-BPP BDBR alongside Total bpp (F21 fix)
     panels = [
@@ -246,7 +254,7 @@ def render_figures(bundle: Dict[str, Any], output_dir: Any) -> None:
     ]
     fig, axes = plt.subplots(2, 2, figsize=(12.2, 9.2), constrained_layout=True)
     for ax, (xf, yf, bf, xl, yl) in zip(axes.flat, panels):
-        for idx, (key, label) in enumerate(METHOD_LABELS.items()):
+        for idx, (key, label) in enumerate(curve_plot_items):
             curve = curves[key]
             ax.plot(
                 curve[xf],

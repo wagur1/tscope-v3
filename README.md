@@ -81,7 +81,6 @@ Source manifest SHA-256: `15fbc3d5438657b2388db742fe6e3fdf63c98b62d3cccefde90618
 | `wo_ctu_delta_qp` | -6.24% (`[-13.00, -2.04]`) | -5.76% | -5.77% | -15.10% |
 | `iwa_gop_qp_reuse` (`-96.7%` GMACs) | -11.92% (`[-18.91, -6.00]`) | -11.38% | -8.24% | -17.49% |
 | **`full_tscope` (Ours)** | **-8.87%** (`[-13.45, -4.38]`) | -8.40% | -10.09% | -21.87% |
-| `oracle_gt_mask_upper_bound` (GT) | -10.19% (`[-23.61, +4.91]`) | -7.56% | -17.65% | +12.34% |
 
 - **Cross-Codec & Random Access:** `libx264` (`family_id=1`) FRCNN AP@50 BDBR = -15.57% | HEVC Random Access (`IBBP`, `bframes=4`) FRCNN AP@50 BDBR = -14.49%.
 - **ByteTrack Multi-Object Tracking BDBR:** `MOTA` = +15.53%, `IDF1` = -0.71%, `HOTA` = -2.22%.

@@ -615,8 +615,6 @@ def render_tables_generated_tex(
         _sota_or_ov_row("T-SCOPE Spatial-Only", "Framewise Pre-Edit", ab.get("spatial_only_scope"), sota_m.get("tscope_spatial_only")),
         _sota_or_ov_row(r"T-SCOPE IWA-Bypass ($K{=}32$)", "Keyframe + P-Bypass", ab.get("iwa_gop_qp_reuse"), sota_m.get("tscope_iwa_gop_qp_reuse")),
         _sota_or_ov_row("T-SCOPE Full (Ours)", "MC + QG P-Carry", ab.get("full_tscope"), sota_m.get("tscope_full"), bold=True),
-        r"\midrule",
-        _sota_or_ov_row(r"Oracle GT-Mask Bound$^\dagger$", "Non-Deployable GT", ov.get("oracle_gt_mask_upper_bound")),
     ]
 
     # 2. Table III: De-Confounded 5-Variant Ablation + Per-Sequence + Pre-Registered Claims
@@ -809,7 +807,7 @@ def render_tables_generated_tex(
 
 \\begin{{table*}}[t]
 \\centering
-\\caption{{Main Rate--Accuracy Comparison on Held-Out \\texttt{{MOT17}} ($640 \\times 384$ 16:9, \\texttt{{yuv420p}}, $\\text{{GOP}}=32$ Low-Delay P, $\\text{{CRF}} \\in \\{{{', '.join(str(q) for q in crfs)}\\}}$). Monotonic PCHIP BDBR (\\%) vs.\\ Direct \\texttt{{libx265}} Anchor (Negative = Bitrate Savings; Bracketed = 10,000-Resample Paired Clip-Block Bootstrap 95\\% CI). \\texttt{{YOLOv8s}} is Strictly Unseen During Single-Teacher Training. $^\\dagger$Non-Deployable Ground-Truth Upper Bound.}}
+\\caption{{Main Rate--Accuracy Comparison on Held-Out \\texttt{{MOT17}} ($640 \\times 384$ 16:9, \\texttt{{yuv420p}}, $\\text{{GOP}}=32$ Low-Delay P, $\\text{{CRF}} \\in \\{{{', '.join(str(q) for q in crfs)}\\}}$). Monotonic PCHIP BDBR (\\%) vs.\\ Direct \\texttt{{libx265}} Anchor (Negative = Bitrate Savings; Bracketed = 10,000-Resample Paired Clip-Block Bootstrap 95\\% CI). \\texttt{{YOLOv8s}} is Strictly Unseen During Single-Teacher Training.}}
 \\label{{tab:main_mot17_sota}}
 \\resizebox{{\\textwidth}}{{!}}{{%
 \\footnotesize
@@ -953,7 +951,6 @@ def render_markdown_benchmark_report(
         ("`spatial_only_scope`", ab.get("spatial_only_scope"), sota_m.get("tscope_spatial_only"), False),
         ("`iwa_gop_qp_reuse`", ab.get("iwa_gop_qp_reuse"), sota_m.get("tscope_iwa_gop_qp_reuse"), False),
         ("**`full_tscope` (Ours)**", ab.get("full_tscope"), sota_m.get("tscope_full"), True),
-        ("`oracle_gt_mask_upper_bound` (GT)", ov.get("oracle_gt_mask_upper_bound"), None, False),
     ]
     anc_md_pqp = (ov.get("anchor_x265") or sota_m.get("anchor_x265") or {}).get("per_qp")
     for lbl, pri, fb, bold in rows_spec:
@@ -1154,7 +1151,6 @@ def build_readme_benchmark_snippet(
         ("`wo_ctu_delta_qp`", ab.get("wo_ctu_delta_qp", {}), False),
         ("`iwa_gop_qp_reuse` (`-96.7%` GMACs)", ab.get("iwa_gop_qp_reuse", {}), False),
         ("**`full_tscope` (Ours)**", ab.get("full_tscope", {}), True),
-        ("`oracle_gt_mask_upper_bound` (GT)", ov.get("oracle_gt_mask_upper_bound", {}), False),
     ]
     for lbl, src, bold in rows:
         lines.append(
