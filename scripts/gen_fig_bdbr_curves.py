@@ -34,14 +34,14 @@ METHOD_LABELS = {
     "tscope_temporal_ctu_qp": "Full T-SCOPE v3 (MC + ConvGRU + QG carry)",
 }
 VARIANT_LABELS = {
-    "full_tscope": "Full T-SCOPE (MC + ConvGRU + real STE + QG carry)",
-    "wo_ctu_delta_qp": "w/o CTU ΔQP (MC + ConvGRU + real STE, ΔQP=0)",
-    "spatial_only_scope": "Spatial-only SCOPE (framewise + real STE, ΔQP=0)",
-    "iwa_gop_qp_reuse": "IWA-GOP QP reuse (keyframe U-Net + P-bypass)",
-    "wo_x265_ste_proxy": "w/o real x265 STE (proxy-only STE, ΔQP=4)",
+    "full_tscope": "T-SCOPE Full (Ours)\n(MC + GRU + QG carry)",
+    "iwa_gop_qp_reuse": "T-SCOPE IWA (Ours)\n(Keyframe + P-bypass)",
+    "spatial_only_scope": "Spatial-only SCOPE\n(Framewise, no MC/QG)",
+    "wo_ctu_delta_qp": "w/o QG ΔQP\n(Pixel pre-edit only)",
+    "wo_x265_ste_proxy": "w/o Real-Codec STE\n(Analytical proxy only)",
 }
-COLORS = ["#666666", "#E69F00", "#0072B2", "#D55E00", "#CC79A7"]
-MARKERS = ["o", "v", "s", "D", "*"]
+COLORS = ["#D55E00", "#009E73", "#8E44AD", "#0072B2", "#64748B"]
+MARKERS = ["*", "D", "s", "o", "v"]
 
 
 class PlotInputError(ValueError):
@@ -146,7 +146,7 @@ def codec_caption(bundle: Dict[str, Any]) -> str:
     return (
         f"Format={codec['pix_fmt']}, GOP={int(codec['gop_len'])}, QG={int(codec['qg_size'])} px "
         f"({grid[1]}x{grid[0]} addroi grid); "
-        f"qoffset caps [{codec['negative_qoffset_cap']:+.2f}, {codec['positive_qoffset_cap']:+.2f}]"
+        f"non-negative QG qoffset [0.00, {codec['positive_qoffset_cap']:+.2f}] (ΔQP in [0, +7.14])"
     )
 
 
@@ -444,47 +444,91 @@ def render_figures(bundle: Dict[str, Any], output_dir: Any, sota_bundle: Optiona
         )
         _save(fig, output_dir, "fig_bdbr_curves", plt)
 
-    # 2x2 de-confounded ablation bars (Total BDBR & P-Frame BDBR + 95% CI error bars)
-    ab_panels = [
-        ("total_bpp", "gt_ap50", "bdbr_tot_gt50", "Total bitrate (bpp)", "GT AP@50 (%)"),
-        ("total_bpp", "gt_ap95", "bdbr_tot_gt95", "Total bitrate (bpp)", "GT AP@[.50:.95] (%)"),
-        ("p_bpp", "gt_ap50", "bdbr_p_gt50", "P-frame bitrate (bpp)", "GT AP@50 (%)"),
-        ("p_bpp", "gt_ap95", "bdbr_p_gt95", "P-frame bitrate (bpp)", "GT AP@[.50:.95] (%)"),
-    ]
+    # 2x2 de-confounded ablation bars (Total BDBR, P-Frame BDBR, AP50:95 & Zero-Shot YOLOv8s + 95% CI error bars)
     variants = {k: extract_curve(bundle["ablation_variants_summary"], k, crfs) for k in VARIANT_LABELS}
-    fig, axes = plt.subplots(2, 2, figsize=(13.0, 9.6), constrained_layout=True)
-    for ax, (_, _, bf, xl, yl) in zip(axes.flat, ab_panels):
+    has_ab_yolo = all(variants[k].get("bdbr_tot_yolo50") is not None for k in VARIANT_LABELS)
+    ab_panels = [
+        ("(a) In-Domain Faster R-CNN AP@50 — Total BDBR", "bdbr_tot_gt50", "Total BDBR at FRCNN AP@50 (%)"),
+        ("(b) In-Domain Faster R-CNN AP@50 — Inter/P-Frame BDBR", "bdbr_p_gt50", "Inter/P-Frame BDBR at FRCNN AP@50 (%)"),
+        ("(c) High-IoU Faster R-CNN AP@[.50:.95] — Total BDBR", "bdbr_tot_gt95", "Total BDBR at FRCNN AP@[.50:.95] (%)"),
+        (
+            ("(d) Zero-Shot Unseen YOLOv8s AP@50 — Total BDBR", "bdbr_tot_yolo50", "Total BDBR at Unseen YOLOv8s AP@50 (%)")
+            if has_ab_yolo
+            else ("(d) High-IoU Faster R-CNN AP@[.50:.95] — Inter/P BDBR", "bdbr_p_gt95", "Inter/P-Frame BDBR at FRCNN AP@[.50:.95] (%)")
+        ),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(13.2, 9.2), constrained_layout=True)
+    for ax, (ptitle, bf, ylabel) in zip(axes.flat, ab_panels):
         unavailable = []
+        low_pts: List[float] = [0.0]
+        high_pts: List[float] = [0.0]
         for idx, (key, _) in enumerate(VARIANT_LABELS.items()):
             curve = variants[key]
-            value = curve[bf]
+            value = curve.get(bf)
             if value is None:
                 ax.text(idx, 0.02, "N/A", transform=ax.get_xaxis_transform(), ha="center", fontsize=8)
-                unavailable.append(f"{key}: {curve['bdbr_unavailable_reasons'][bf]}")
+                unavailable.append(f"{key}: {curve.get('bdbr_unavailable_reasons', {}).get(bf, 'N/A')}")
             else:
                 ci = curve["bdbr_ci95"].get(bf)
                 yerr = [[max(0.0, value - ci[0])], [max(0.0, ci[1] - value)]] if ci is not None else None
-                ax.bar(idx, value, color=COLORS[idx], width=0.62, yerr=yerr, capsize=3 if yerr else 0)
-                ax.annotate(
-                    f"{value:+.1f}%",
-                    (idx, value),
-                    xytext=(0, 5 if value >= 0 else -5),
-                    textcoords="offset points",
-                    ha="center",
-                    va="bottom" if value >= 0 else "top",
-                    fontsize=7.5,
+                is_ours = key in ("full_tscope", "iwa_gop_qp_reuse")
+                ax.bar(
+                    idx,
+                    value,
+                    color=COLORS[idx],
+                    width=0.58,
+                    edgecolor="#1E293B" if is_ours else "none",
+                    linewidth=0.9 if is_ours else 0.0,
+                    yerr=yerr,
+                    error_kw=dict(ecolor="#1E293B", lw=1.35, capthick=1.35),
+                    capsize=4 if yerr else 0,
+                    zorder=3,
                 )
-        ax.axhline(0, color="#333333", linewidth=0.8)
+                # Place numeric label cleanly beyond the outer tip of the 95% CI whisker (zero line overlap!)
+                if value <= 0:
+                    tip_y = ci[0] if ci is not None else value
+                    low_pts.append(tip_y)
+                    high_pts.append(ci[1] if ci is not None else value)
+                    ax.annotate(
+                        f"{value:+.2f}%",
+                        (idx, tip_y),
+                        xytext=(0, -6),
+                        textcoords="offset points",
+                        ha="center",
+                        va="top",
+                        fontsize=8.1,
+                        fontweight="bold" if is_ours else "normal",
+                        color="#0F172A",
+                    )
+                else:
+                    tip_y = ci[1] if ci is not None else value
+                    high_pts.append(tip_y)
+                    low_pts.append(ci[0] if ci is not None else value)
+                    ax.annotate(
+                        f"{value:+.2f}%",
+                        (idx, tip_y),
+                        xytext=(0, 6),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8.1,
+                        fontweight="bold" if is_ours else "normal",
+                        color="#0F172A",
+                    )
+        ax.axhline(0, color="#334155", linewidth=0.95)
+        span = max(1.0, max(high_pts) - min(low_pts))
+        ax.set_ylim(min(low_pts) - 0.18 * span, max(0.8, max(high_pts) + 0.12 * span))
         ax.set_xticks(np.arange(len(VARIANT_LABELS)))
-        ax.set_xticklabels(list(VARIANT_LABELS.values()), rotation=18, ha="right", fontsize=6.8)
-        ax.set_ylabel(f"{xl.split(' (')[0]} BDBR at {yl}")
-        ax.margins(y=0.25)
+        ax.set_xticklabels(list(VARIANT_LABELS.values()), rotation=0, ha="center", fontsize=7.6)
+        ax.set_title(ptitle, pad=6)
+        ax.set_ylabel(ylabel + " (negative = savings)")
         if unavailable:
             ax.set_title("Unavailable BDBR\n" + "\n".join(unavailable), fontsize=7)
     fig.suptitle(
-        "De-confounded 5-variant ablations (balanced shards, PCHIP BDBR + 95% bootstrap CIs)\n"
+        "De-confounded 5-variant ablation study across balanced Model Soups (PCHIP BDBR + 10k bootstrap 95% CIs)\n"
         + codec_caption(bundle),
-        fontsize=10,
+        fontsize=10.2,
+        fontweight="bold",
     )
     _save(fig, output_dir, "fig_ablation_bdbr", plt)
 
@@ -492,33 +536,51 @@ def render_figures(bundle: Dict[str, Any], output_dir: Any, sota_bundle: Optiona
     per_seq = bundle.get("per_sequence_summary")
     if isinstance(per_seq, dict) and per_seq:
         seq_keys = sorted(per_seq)
-        fig, axes = plt.subplots(1, len(seq_keys), figsize=(6.2 * len(seq_keys), 4.8), constrained_layout=True)
+        fig, axes = plt.subplots(1, len(seq_keys), figsize=(6.4 * len(seq_keys), 4.9), constrained_layout=True)
         ax_list = [axes] if len(seq_keys) == 1 else list(axes.flat)
+        short_labels = [lbl.split("\n")[0] for lbl in VARIANT_LABELS.values()]
         for ax, seq_name in zip(ax_list, seq_keys):
             seq_vars = {
                 k: extract_curve(per_seq[seq_name]["ablation_variants_summary"], k, crfs)
                 for k in VARIANT_LABELS
             }
+            vals_present: List[float] = [0.0]
             for idx, (key, _) in enumerate(VARIANT_LABELS.items()):
                 val = seq_vars[key]["bdbr_tot_gt50"]
                 if val is not None:
-                    ax.bar(idx, val, color=COLORS[idx], width=0.6)
+                    vals_present.append(val)
+                    is_ours = key in ("full_tscope", "iwa_gop_qp_reuse")
+                    ax.bar(
+                        idx,
+                        val,
+                        color=COLORS[idx],
+                        width=0.56,
+                        edgecolor="#1E293B" if is_ours else "none",
+                        linewidth=0.9 if is_ours else 0.0,
+                    )
                     ax.annotate(
-                        f"{val:+.1f}%",
+                        f"{val:+.2f}%",
                         (idx, val),
-                        xytext=(0, 3 if val >= 0 else -3),
+                        xytext=(0, 5 if val >= 0 else -5),
                         textcoords="offset points",
                         ha="center",
                         va="bottom" if val >= 0 else "top",
-                        fontsize=7.5,
+                        fontsize=8.0,
+                        fontweight="bold" if is_ours else "normal",
+                        color="#0F172A",
                     )
-            ax.axhline(0, color="#333333", linewidth=0.8)
+            ax.axhline(0, color="#334155", linewidth=0.95)
+            s_span = max(1.0, max(vals_present) - min(vals_present))
+            ax.set_ylim(min(vals_present) - 0.16 * s_span, max(0.6, max(vals_present) + 0.10 * s_span))
             ax.set_xticks(np.arange(len(VARIANT_LABELS)))
-            ax.set_xticklabels(list(VARIANT_LABELS.keys()), rotation=20, ha="right", fontsize=7.5)
-            ax.set_title(f"{seq_name} ({per_seq[seq_name].get('frame_count', '?')} frames)")
-            ax.set_ylabel("Total BDBR at GT AP@50 (%)")
-            ax.margins(y=0.25)
-        fig.suptitle("Verified per-sequence BDBR breakdown (single source of truth)\n" + codec_caption(bundle), fontsize=10)
+            ax.set_xticklabels(short_labels, rotation=16, ha="right", fontsize=8.0)
+            ax.set_title(f"{seq_name} ({per_seq[seq_name].get('frame_count', '?')} frames)", pad=6)
+            ax.set_ylabel("Total BDBR at Faster R-CNN AP@50 (%)")
+        fig.suptitle(
+            "Per-sequence BDBR disaggregation across held-out MOT17 sequences\n" + codec_caption(bundle),
+            fontsize=10.2,
+            fontweight="bold",
+        )
         _save(fig, output_dir, "fig_per_sequence_bdbr", plt)
 
 

@@ -233,14 +233,14 @@ Bảng~\ref{tab:deconfounded_ablations} và Hình~\ref{fig:ablation_bdbr_vi} cô
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.96\textwidth]{../docs/figures/fig_ablation_bdbr.pdf}
-\caption{Biểu đồ Ablation tách biến trên 5 Model Soup cân bằng (Total BDBR và P-frame BDBR trên $\mathrm{AP}_{50}$, $\mathrm{AP}_{50:95}$ kèm thanh sai số CI 95\% bootstrap 10.000 lần).}
+\caption{Biểu đồ Ablation tách biến trên 5 Model Soup cân bằng: (a)~Total BDBR và (b)~Inter/P-frame BDBR trên Faster R-CNN $\mathrm{AP}_{50}$, (c)~Total BDBR trên $\mathrm{AP}_{50:95}$ IoU cao, và (d)~Total BDBR trên YOLOv8s $\mathrm{AP}_{50}$ zero-shot kèm thanh sai số CI 95\% bootstrap 10.000 lần.}
 \label{fig:ablation_bdbr_vi}
 \end{figure*}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.96\textwidth]{../docs/figures/fig_qualitative_v3.pdf}
-\caption{Kết quả định tính trên chuỗi GOP 32 khung của \texttt{MOT17-11} và \texttt{MOT17-13} tại $\mathrm{CRF}=37$: đối chiếu \texttt{anchor\_x265}, \texttt{full\_tscope} và \texttt{iwa\_gop\_qp\_reuse} kèm mặt nạ tiền cảnh, bản đồ QG $+\Delta\mathrm{QP}$ và kết quả phát hiện Faster R-CNN sau giải mã.}
+\caption{Kết quả định tính trên chuỗi GOP 32 khung của \texttt{MOT17-11} (trên: giảm $15{,}2\%$ bpp và khử hộp biên trùng lặp) và \texttt{MOT17-13} (dưới: giảm $5{,}4\%$ bpp đồng thời phát hiện thêm người đi bộ ở xa, $\mathrm{det}=10$ so với $6$) tại $\mathrm{CRF}=37$: khung gốc, ảnh tiền biên tập $I_{\mathrm{edit},t}$, mặt nạ $A_t^{\mathrm{eff}}$, bản đồ $16\times 16$ QG $+\Delta\mathrm{QP}$ và phát hiện Faster R-CNN của \texttt{anchor\_x265} so với \texttt{full\_tscope}.}
 \label{fig:qualitative_v3_vi}
 \end{figure*}
 

@@ -426,14 +426,14 @@ Table~\ref{tab:deconfounded_ablations} and Fig.~\ref{fig:ablation_bdbr} isolate 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.96\textwidth]{../docs/figures/fig_ablation_bdbr.pdf}
-\caption{De-confounded five-variant ablation study across balanced Model Soups on Total BDBR and Inter/P-frame BDBR ($\mathrm{AP}_{50}$ and $\mathrm{AP}_{50:95}$) with 10,000-resample clip-bootstrap 95\% confidence intervals.}
+\caption{De-confounded five-variant ablation study across balanced Model Soups: (a)~Total BDBR and (b)~Inter/P-frame BDBR at in-domain Faster R-CNN $\mathrm{AP}_{50}$, (c)~Total BDBR at high-IoU $\mathrm{AP}_{50:95}$, and (d)~Total BDBR on strictly unseen zero-shot YOLOv8s $\mathrm{AP}_{50}$, with 10,000-resample clip-bootstrap 95\% confidence intervals.}
 \label{fig:ablation_bdbr}
 \end{figure*}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.96\textwidth]{../docs/figures/fig_qualitative_v3.pdf}
-\caption{Qualitative 32-frame GOP visualizations on handheld \texttt{MOT17-11} and moving-camera \texttt{MOT17-13} at $\mathrm{CRF}=37$, illustrating unedited \texttt{anchor\_x265}, \texttt{full\_tscope}, and \texttt{iwa\_gop\_qp\_reuse} alongside foreground attention, halo-guarded QG $+\Delta\mathrm{QP}$ heatmaps, and decoded Faster R-CNN detections.}
+\caption{Qualitative 32-frame GOP visualizations on handheld \texttt{MOT17-11} (top, $-15.2\%$ bitrate while suppressing duplicate false-positive boxes) and moving-camera \texttt{MOT17-13} (bottom, $-5.4\%$ bitrate while recovering distant pedestrian detections: $10$ vs.\ $6$) at $\mathrm{CRF}=37$, showing clean input, pre-edited $I_{\mathrm{edit},t}$, effective attention $A_t^{\mathrm{eff}}$, halo-guarded $16\times 16$ QG $+\Delta\mathrm{QP}$ heatmaps, and decoded Faster R-CNN detections for \texttt{anchor\_x265} vs.\ \texttt{full\_tscope}.}
 \label{fig:qualitative_v3}
 \end{figure*}
 
