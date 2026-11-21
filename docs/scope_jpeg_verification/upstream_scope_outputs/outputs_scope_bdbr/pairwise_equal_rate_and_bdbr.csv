@@ -1,0 +1,10 @@
+codec,detector_label,detector,test_method,test_method_display,reference_method,reference_method_display,interpolation,metric,rate_key,reference_points,test_points,common_rate_min,common_rate_max,mean_metric_delta_equal_rate,mean_metric_delta_equal_rate_x100,min_metric_delta_equal_rate,max_metric_delta_equal_rate,equal_rate_status,common_quality_min,common_quality_max,reference_pareto_points,test_pareto_points,bdbr_percent,bd_status
+jpeg,fastrcnn,Faster R-CNN,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,6,6,0.359503936458,0.690216193098,0.06286161948867379,6.286161948867379,0.02267188449171942,0.08118302319363016,ok,0.11567238735025767,0.3867640269074642,6,6,-16.485293187857984,ok
+jpeg,rtdetr,RT-DETR,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,6,6,0.359503936458,0.690216193098,0.007556325455091757,0.7556325455091757,-0.004363950121059612,0.022174867929759257,ok,0.3677956880724293,0.4681377273878892,6,6,-5.622940934220555,ok
+jpeg,yolo,YOLO,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,6,6,0.359503936458,0.690216193098,0.046337384132024775,4.633738413202478,0.010439315580880015,0.09221986773294444,ok,0.2556399767534386,0.4943719140326179,6,6,-14.981235476054145,ok
+bpg,fastrcnn,Faster R-CNN,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,,,,,,,,,missing_reference_curve,,,,,,missing_reference_curve
+bpg,rtdetr,RT-DETR,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,,,,,,,,,missing_reference_curve,,,,,,missing_reference_curve
+bpg,yolo,YOLO,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,,,,,,,,,missing_reference_curve,,,,,,missing_reference_curve
+bmshj,fastrcnn,Faster R-CNN,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,,,,,,,,,missing_reference_curve,,,,,,missing_reference_curve
+bmshj,rtdetr,RT-DETR,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,,,,,,,,,missing_reference_curve,,,,,,missing_reference_curve
+bmshj,yolo,YOLO,full,SCOPE,baseline,Baseline,pchip,AP,dataset_bpp,,,,,,,,,missing_reference_curve,,,,,,missing_reference_curve

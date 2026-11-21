@@ -1,0 +1,10 @@
+codec,detector_label,detector,available_curves,missing_curves,common_rate_min,common_rate_max,status
+jpeg,fastrcnn,Faster R-CNN,"baseline,full",,0.359503936458,0.690216193098,ok
+jpeg,rtdetr,RT-DETR,"baseline,full",,0.359503936458,0.690216193098,ok
+jpeg,yolo,YOLO,"baseline,full",,0.359503936458,0.690216193098,ok
+bpg,fastrcnn,Faster R-CNN,,"baseline,full",,,missing_baseline
+bpg,rtdetr,RT-DETR,,"baseline,full",,,missing_baseline
+bpg,yolo,YOLO,,"baseline,full",,,missing_baseline
+bmshj,fastrcnn,Faster R-CNN,,"baseline,full",,,missing_baseline
+bmshj,rtdetr,RT-DETR,,"baseline,full",,,missing_baseline
+bmshj,yolo,YOLO,,"baseline,full",,,missing_baseline

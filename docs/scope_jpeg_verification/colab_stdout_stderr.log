@@ -1,0 +1,46 @@
++ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+[Disk] /content total=235.7 GB | free=235.1 GB
+[Reuse] Reusing existing /content/SCOPE checkout and installed packages.
+[Env] ultralytics=8.4.215
+[Upstream SCOPE] HEAD=453a40bebd73d4a7c3ad4436370e96f412a0a546
++ curl -L --retry 3 -sS https://drive.usercontent.google.com/download?id=1M7lHWbNjrckMNBC623Cn5PvBDuDUBlda&export=download&confirm=t -o /content/SCOPE/runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+[Checkpoint] best_val.pt sha256=01bbb0c35f6846293be046a154b31e3037aa2bdbc4dab98362fcf6d9184d81e2
++ curl -L --retry 3 -sS -o /content/coco2017/val2017.zip http://images.cocodataset.org/zips/val2017.zip
++ curl -L --retry 3 -sS -o /content/coco2017/annotations_trainval2017.zip http://images.cocodataset.org/annotations/annotations_trainval2017.zip
+[COCO] val2017 images=5000, ann=True
+Downloading https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt to 'yolo26x.pt': 27% ━━━───────── 31.2/113.2MB 311.9MB/s 0.1s<0.3sDownloading https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt to 'yolo26x.pt': 50% ━━━━━━────── 56.8/113.2MB 255.7MB/s 0.2s<0.2sDownloading https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt to 'yolo26x.pt': 84% ━━━━━━━━━━── 96.0/113.2MB 381.8MB/s 0.3s<0.0sDownloading https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt to 'yolo26x.pt': 100% ━━━━━━━━━━━━ 113.2MB 332.1MB/s 0.3s
+Downloading https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-l.pt to 'rtdetr-l.pt': 34% ━━━━──────── 21.9/63.4MB 218.7MB/s 0.1s<0.2sDownloading https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-l.pt to 'rtdetr-l.pt': 82% ━━━━━━━━━╸── 52.5/63.4MB 303.9MB/s 0.2s<0.0sDownloading https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-l.pt to 'rtdetr-l.pt': 100% ━━━━━━━━━━━━ 63.4MB 269.0MB/s 0.2s
+[Detectors] Ready: models/yolo26x.pt and models/rtdetr-l.pt
+[Config] Wrote /content/SCOPE/configs/eval_jpeg_only.yaml with 12 JPEG experiments
++ /usr/bin/python3 -u evaluation/evaluate_yolo26x_codecs.py --config configs/eval_jpeg_only.yaml
++ /usr/bin/python3 -u evaluation/evaluate_rtdetr_l_saved.py --source-eval-dir outputs_scope_full_main --images-dir datasets/coco-2017/validation/data --annotations-json datasets/coco-2017/validation/labels.json --detector-weights models/rtdetr-l.pt --category-map coco91 --output-dir outputs_scope_full_rtdetr_l
++ /usr/bin/python3 -u -m scope.evaluation.saved_multi_detector --source-eval-dir outputs_scope_full_main --images-dir datasets/coco-2017/validation/data --annotations-json datasets/coco-2017/validation/labels.json --backend torchvision --detector fasterrcnn_resnet50_fpn_v2 --label-space coco91 --output-dir outputs_scope_full_fasterrcnn_v2
++ /usr/bin/python3 -u analysis/compute_bdbr.py --detector-dir full:yolo=outputs_scope_full_main full:rtdetr=outputs_scope_full_rtdetr_l full:fastrcnn=outputs_scope_full_fasterrcnn_v2 --annotations-json datasets/coco-2017/validation/labels.json --table-methods full --out-dir outputs_scope_bdbr
++ /usr/bin/python3 -u analysis/compute_bdbr.py --detector-dir full:yolo=outputs_scope_full_main full:rtdetr=outputs_scope_full_rtdetr_l full:fastrcnn=outputs_scope_full_fasterrcnn_v2 --annotations-json datasets/coco-2017/validation/labels.json --metric AP50 --table-methods full --out-dir outputs_scope_bdbr_ap50
+
+=== outputs_scope_bdbr/bdbr_summary.csv ===
+codec,detector,test_method,reference_method,bdbr_percent,common_accuracy_min,common_accuracy_max,reference_pareto_points,test_pareto_points,status
+jpeg,Faster R-CNN,SCOPE,Baseline,-16.485293187857984,0.11567238735025767,0.3867640269074642,6,6,ok
+jpeg,RT-DETR,SCOPE,Baseline,-5.622940934220555,0.3677956880724293,0.4681377273878892,6,6,ok
+jpeg,YOLO,SCOPE,Baseline,-14.981235476054145,0.2556399767534386,0.4943719140326179,6,6,ok
+bpg,Faster R-CNN,SCOPE,Baseline,,,,,,missing_reference_curve
+bpg,RT-DETR,SCOPE,Baseline,,,,,,missing_reference_curve
+bpg,YOLO,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,Faster R-CNN,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,RT-DETR,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,YOLO,SCOPE,Baseline,,,,,,missing_reference_curve
+
+
+=== outputs_scope_bdbr_ap50/bdbr_summary.csv ===
+codec,detector,test_method,reference_method,bdbr_percent,common_accuracy_min,common_accuracy_max,reference_pareto_points,test_pareto_points,status
+jpeg,Faster R-CNN,SCOPE,Baseline,-16.418625437650945,0.18693277558708984,0.5626083692393316,6,6,ok
+jpeg,RT-DETR,SCOPE,Baseline,-3.5508547531731938,0.5328512870876271,0.6456625154936083,6,6,ok
+jpeg,YOLO,SCOPE,Baseline,-14.57886119401197,0.3768629289536488,0.6614821775514171,6,6,ok
+bpg,Faster R-CNN,SCOPE,Baseline,,,,,,missing_reference_curve
+bpg,RT-DETR,SCOPE,Baseline,,,,,,missing_reference_curve
+bpg,YOLO,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,Faster R-CNN,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,RT-DETR,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,YOLO,SCOPE,Baseline,,,,,,missing_reference_curve
+
+[DONE] Archived /content/upstream_scope_jpeg_results.tar.gz (25.9 KB) in 12034.5s

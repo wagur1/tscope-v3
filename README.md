@@ -5,6 +5,7 @@
 - **Bản thảo bài báo (English Preprint):** [`paper/main.pdf`](./paper/main.pdf) ([`paper/main.tex`](./paper/main.tex))
 - **Bản thảo bài báo (Tiếng Việt Preprint):** [`paper/main_vi.pdf`](./paper/main_vi.pdf) ([`paper/main_vi.tex`](./paper/main_vi.tex))
 - **Báo cáo thực nghiệm đầy đủ (Auto-Synced JSON Single Source of Truth):** [`docs/V3_Q1_BENCHMARK_REPORT.md`](./docs/V3_Q1_BENCHMARK_REPORT.md)
+- **Kiểm chứng độc lập `Official SCOPE` (COCO 5.000 ảnh JPEG $\rightarrow$ Cầu nối Video HEVC):** [`docs/scope_jpeg_verification/`](./docs/scope_jpeg_verification/) ([`PDF`](./docs/scope_jpeg_verification/BAO_CAO_KIEM_CHUNG_SCOPE_JPEG.pdf) | [`XLSX`](./docs/scope_jpeg_verification/BAO_CAO_KIEM_CHUNG_SCOPE_JPEG.xlsx) | [`Script`](./scripts/verify_official_scope_jpeg.py))
 - **Trọng số phát hành (5 Uniform Model Soups kiểm định trên `MOT17-09`):** [`release_ckpts/`](./release_ckpts/) & [`docs/soup_connectivity_report.json`](./docs/soup_connectivity_report.json)
 - **Kiểm thử tự động:** `55 passed, 11 subtests passed` (`pytest -q`)
 
@@ -101,6 +102,19 @@ Source manifest SHA-256: `15fbc3d5438657b2388db742fe6e3fdf63c98b62d3cccefde90618
 | **`T-SCOPE IWA-Bypass` (`113.2 FPS`)** | **Keyframe + P-Bypass** | **`-11.92%`** (`[-18.9, -6.0]`) | **`-11.38%`** | `-8.24%` | `-17.49%` |
 | **`T-SCOPE Full` (Ours)** | **MC + Halo QG P-Carry** | **`-8.87%`** (`[-13.4, -4.4]`) | **`-8.40%`** | **`-10.09%`** | **`-21.87%`** |
 
+#### Kiểm chứng độc lập `Official miccunifi/SCOPE` trên JPEG (`COCO 5.000 ảnh`) & Phân rã `+18.53pp` sang Video HEVC ([`docs/scope_jpeg_verification/`](./docs/scope_jpeg_verification/))
+
+Sử dụng cùng một checkpoint chính thức `best_val.pt` (`SHA-256: 01bbb0c35f68...`) từ repo `miccunifi/SCOPE` (`453a40b`), chuỗi đo độc lập trên `Colab Pro A100` và `Kaggle` xác nhận `Official SCOPE` tái lập đúng số liệu gốc trên ảnh tĩnh JPEG nhưng suy giảm cộng tính `+18.53pp` (`-16.42% -> +2.11%`) khi đưa sang nén video `libx265 GOP=32`:
+
+| Bước đối chứng | Tập dữ liệu | Codec & Chế độ | `Δbpp` vs. Gốc | `FRCNN AP@50` BDBR | `FRCNN AP@50:95` BDBR | `YOLO AP@50` BDBR | Dịch chuyển (`FR50`) |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **0. Paper gốc (`Colab A100`)** | `COCO val` (`5,000` ảnh) | `JPEG` (`Q=10..50`) | `-24.1% .. -30.9%` | **`-16.42%`** *(Kaggle: `-16.40%`)* | **`-16.49%`** *(Kaggle: `-16.32%`)* | **`-14.58%`** *(RT-DETR: `-3.55%`)* | Mốc gốc |
+| **1. Domain Shift (`Acc 00`)** | `MOT17` (`1,632` frame) | `JPEG` (`Q=10..50`, ảnh tĩnh) | `-21.0% .. -22.3%` | **`-8.14%`** | `-11.96%` | `+0.04%` | **`+8.28pp`** *(người nhỏ xa)* |
+| **2. Codec RDO (`Acc 00`)** | `MOT17` (`1,632` frame) | `libx265` Intra (`GOP=1`, `CRF=27..42`) | **`-1.23% .. -1.82%`** | **`-2.28%`** | `-2.83%` | `-0.52%` | **`+5.86pp`** *(`x265 aq-mode=2` tự nén nền)* |
+| **3. P-Frame Flicker** | `MOT17` (`1,632` frame) | `libx265` Inter (`GOP=32`, `CRF=27..42`) | **P-bpp: `+1.32% .. +3.40%`** | **`+2.11%`** *(P: `+2.67%`)* | `-2.25%` | `+5.29%` | **`+4.39pp`** *(flicker phá `SKIP` 31 P-frame)* |
+
+![Official SCOPE 4-Step Regime Bridge](./docs/scope_jpeg_verification/fig_scope_4step_bridge.png)
+
 ![BDBR Rate-Accuracy Curves](./docs/figures/fig_bdbr_curves.png)
 
 ![De-Confounded Ablation BDBR](./docs/figures/fig_ablation_bdbr.png)
@@ -181,6 +195,7 @@ Toàn bộ kết quả từ [`outputs_kaggle_pool/cross_backbone_bdbr.json`](./o
 ├── docs/
 │   ├── V3_Q1_BENCHMARK_REPORT.md       # Báo cáo chi tiết toàn bộ bảng thực nghiệm
 │   ├── soup_connectivity_report.json   # Kiểm định Linear Mode Connectivity trên MOT17-09
+│   ├── scope_jpeg_verification/        # Báo cáo, CSV, JSON & log kiểm chứng độc lập Official SCOPE (COCO 5k JPEG -> MOT17 HEVC)
 │   └── figures/                        # Kịch bản & hình vẽ kiến trúc, BDBR, ablation, định tính
 ├── models/
 │   ├── temporal_scope.py               # TemporalSCOPE (6.11M params), 6-DOF IRLS, IWA P-bypass, Halo QG

@@ -1,0 +1,10 @@
+codec,detector,test_method,reference_method,bdbr_percent,common_accuracy_min,common_accuracy_max,reference_pareto_points,test_pareto_points,status
+jpeg,Faster R-CNN,SCOPE,Baseline,-16.418625437650945,0.18693277558708984,0.5626083692393316,6,6,ok
+jpeg,RT-DETR,SCOPE,Baseline,-3.5508547531731938,0.5328512870876271,0.6456625154936083,6,6,ok
+jpeg,YOLO,SCOPE,Baseline,-14.57886119401197,0.3768629289536488,0.6614821775514171,6,6,ok
+bpg,Faster R-CNN,SCOPE,Baseline,,,,,,missing_reference_curve
+bpg,RT-DETR,SCOPE,Baseline,,,,,,missing_reference_curve
+bpg,YOLO,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,Faster R-CNN,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,RT-DETR,SCOPE,Baseline,,,,,,missing_reference_curve
+bmshj,YOLO,SCOPE,Baseline,,,,,,missing_reference_curve

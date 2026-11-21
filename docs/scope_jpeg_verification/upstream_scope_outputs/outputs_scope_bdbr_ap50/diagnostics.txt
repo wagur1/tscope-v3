@@ -1,0 +1,18 @@
+rows: 36
+ablation_label: {'full': 36}
+ablation_key: {'full': 36}
+codecs: {'jpeg': 36}
+families: {'block_dct': 36}
+detectors: {'fastrcnn': 12, 'rtdetr': 12, 'yolo': 12}
+curve_type: {'baseline': 18, 'scope': 18}
+
+Interpolation-table status:
+  jpeg/Faster R-CNN: ok | available=baseline,full | missing= | range=[0.359503936458, 0.690216193098]
+  jpeg/RT-DETR: ok | available=baseline,full | missing= | range=[0.359503936458, 0.690216193098]
+  jpeg/YOLO: ok | available=baseline,full | missing= | range=[0.359503936458, 0.690216193098]
+  bpg/Faster R-CNN: missing_baseline | available= | missing=baseline,full | range=[, ]
+  bpg/RT-DETR: missing_baseline | available= | missing=baseline,full | range=[, ]
+  bpg/YOLO: missing_baseline | available= | missing=baseline,full | range=[, ]
+  bmshj/Faster R-CNN: missing_baseline | available= | missing=baseline,full | range=[, ]
+  bmshj/RT-DETR: missing_baseline | available= | missing=baseline,full | range=[, ]
+  bmshj/YOLO: missing_baseline | available= | missing=baseline,full | range=[, ]

@@ -1,0 +1,16 @@
+\begin{table*}[t]
+\centering
+\caption{Bjøntegaard Delta Bitrate (BDBR) computed using downstream-task accuracy as the quality axis. Negative values indicate bitrate savings at the same accuracy.}
+\label{tab:ablation_bdbr}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lllr}
+\toprule
+Codec & Detector & Comparison & BDBR (\%) \\
+\midrule
+JPEG & Faster R-CNN & SCOPE vs. Baseline & -16.49 \\
+JPEG & RT-DETR & SCOPE vs. Baseline & -5.62 \\
+JPEG & YOLO & SCOPE vs. Baseline & -14.98 \\
+\bottomrule
+\end{tabular}
+\end{table*}

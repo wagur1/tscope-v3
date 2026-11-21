@@ -1,0 +1,8 @@
+﻿Phương pháp & Bước đối chứng,Tập dữ liệu,Codec & Cấu hình,BDBR FRCNN AP@50,BDBR FRCNN AP@50:95,BDBR YOLO AP@50,BDBR YOLO AP@50:95,Cơ chế tác động chính
+Official SCOPE (Upstream),COCO 2017 val (5.000 ảnh),JPEG (Q=10..50) [FRCNN / YOLO26x],-16.42%,-16.49%,-14.58%,-14.98%,Giảm ~30% bpp JPEG nhờ làm mờ nền; tái lập đúng kết quả paper gốc
+Official SCOPE (Upstream),COCO 2017 val (5.000 ảnh),JPEG (Q=10..50) [RT-DETR-l],--,--,-3.55%*,-5.62%*,*Cột YOLO hiển thị RT-DETR-l (equal-rate trung bình +0.76 AP)
+Official SCOPE (Bridge 1),MOT17 held-out (1.632 frame),JPEG (Q=10..50) [block_dct],-8.14%,-11.96%,+0.04%,-8.80%,+8.28pp domain shift: người nhỏ xa nhạy với mask (vẫn âm mạnh)
+Official SCOPE (Bridge 2),MOT17 held-out (1.632 frame),libx265 Intra GOP=1 (CRF=27..42),-2.28%,-2.83%,-0.52%,-1.43%,+5.86pp: x265 aq-mode=2 nén sẵn nền (-1.23% bpp thay vì -22.1% JPEG)
+Official SCOPE (Paper Bas.),MOT17 held-out (1.632 frame),"libx265 Inter GOP=32 (CRF=27..42, LDP)",+2.11%,-2.25%,+5.29%,+1.83%,+4.39pp: flicker từng frame phá P-frame (P-frame BDBR +2.67%; tổng +2.11%)
+T-SCOPE IWA-Bypass (Ours),MOT17 held-out (1.632 frame),libx265 Inter GOP=32 (Keyframe + QG Reuse),-11.92%,-8.24%,-17.49%,-9.87%,Không flicker P-frame (113.2 FPS); QG +DeltaQP ổn định toàn GOP
+T-SCOPE Full (Ours),MOT17 held-out (1.632 frame),libx265 Inter GOP=32 (MC + GRU + QG +dQP),-8.87%,-10.09%,-21.87%,-16.30%,Căn chỉnh affine + EMA nền + QG +DeltaQP (-9.70% P-frame BDBR)

@@ -1,0 +1,242 @@
+output_dir: outputs_scope_full_main
+device: cuda
+category_id_offset: 0
+dataset:
+  images_dir: datasets/coco-2017/validation/data
+  annotations_json: datasets/coco-2017/validation/labels.json
+models:
+  server_model: models/yolo26x.pt
+server_predict:
+  conf: 0.001
+  iou: 0.7
+  max_det: 300
+  category_map: coco91
+bpg_encoder_bin: bpgenc
+bpg_decoder_bin: bpgdec
+scope_common:
+  scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+codec_templates:
+  jpeg:
+    mode: uniform
+    codec_family: block_dct
+  scope_jpeg:
+    scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+    architecture: scope_bgreplace
+    condition_mode: family_severity
+    base_ch: 48
+    family_emb_dim: 8
+    cond_dim: 64
+    max_delta_obj: 0.09
+    max_delta_bg: 0.03
+    attention_bias: -4.0
+    bg_mode: blur_replace
+    bg_blur_kernel: 51
+    bg_lowres_scale: 16
+    mode: scope_jpeg
+    codec_family: block_dct
+  bpg:
+    mode: bpg
+    codec_family: intra_smooth
+    bpg_qp_min: 0
+    bpg_qp_max: 51
+  scope_bpg:
+    scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+    architecture: scope_bgreplace
+    condition_mode: family_severity
+    base_ch: 48
+    family_emb_dim: 8
+    cond_dim: 64
+    max_delta_obj: 0.09
+    max_delta_bg: 0.03
+    attention_bias: -4.0
+    bg_mode: blur_replace
+    bg_blur_kernel: 51
+    bg_lowres_scale: 16
+    mode: scope_bpg
+    codec_family: intra_smooth
+    bpg_qp_min: 0
+    bpg_qp_max: 51
+  bmshj:
+    mode: compressai
+    codec_family: learned
+    compressai_model: bmshj2018-hyperprior
+  scope_bmshj:
+    scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+    architecture: scope_bgreplace
+    condition_mode: family_severity
+    base_ch: 48
+    family_emb_dim: 8
+    cond_dim: 64
+    max_delta_obj: 0.09
+    max_delta_bg: 0.03
+    attention_bias: -4.0
+    bg_mode: blur_replace
+    bg_blur_kernel: 51
+    bg_lowres_scale: 16
+    mode: scope_compressai
+    codec_family: learned
+    compressai_model: bmshj2018-hyperprior
+  cheng:
+    mode: compressai
+    codec_family: bmshj
+    compressai_model: cheng2020-attn
+  scope_cheng:
+    scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+    architecture: scope_bgreplace
+    condition_mode: family_severity
+    base_ch: 48
+    family_emb_dim: 8
+    cond_dim: 64
+    max_delta_obj: 0.09
+    max_delta_bg: 0.03
+    attention_bias: -4.0
+    bg_mode: blur_replace
+    bg_blur_kernel: 51
+    bg_lowres_scale: 16
+    mode: scope_compressai
+    codec_family: bmshj
+    compressai_model: cheng2020-attn
+experiments:
+- mode: uniform
+  codec_family: block_dct
+  name: jpeg_q10
+  jpeg_quality: 10
+- mode: uniform
+  codec_family: block_dct
+  name: jpeg_q15
+  jpeg_quality: 15
+- mode: uniform
+  codec_family: block_dct
+  name: jpeg_q20
+  jpeg_quality: 20
+- mode: uniform
+  codec_family: block_dct
+  name: jpeg_q30
+  jpeg_quality: 30
+- mode: uniform
+  codec_family: block_dct
+  name: jpeg_q40
+  jpeg_quality: 40
+- mode: uniform
+  codec_family: block_dct
+  name: jpeg_q50
+  jpeg_quality: 50
+- scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+  mode: scope_jpeg
+  codec_family: block_dct
+  name: scope_jpeg_q10
+  jpeg_quality: 10
+  condition:
+    severity: 0.908163
+- scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+  mode: scope_jpeg
+  codec_family: block_dct
+  name: scope_jpeg_q15
+  jpeg_quality: 15
+  condition:
+    severity: 0.857143
+- scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+  mode: scope_jpeg
+  codec_family: block_dct
+  name: scope_jpeg_q20
+  jpeg_quality: 20
+  condition:
+    severity: 0.806122
+- scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+  mode: scope_jpeg
+  codec_family: block_dct
+  name: scope_jpeg_q30
+  jpeg_quality: 30
+  condition:
+    severity: 0.704082
+- scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+  mode: scope_jpeg
+  codec_family: block_dct
+  name: scope_jpeg_q40
+  jpeg_quality: 40
+  condition:
+    severity: 0.602041
+- scope_ckpt: runs/preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557/best_val.pt
+  architecture: scope_bgreplace
+  condition_mode: family_severity
+  base_ch: 48
+  family_emb_dim: 8
+  cond_dim: 64
+  max_delta_obj: 0.09
+  max_delta_bg: 0.03
+  attention_bias: -4.0
+  bg_mode: blur_replace
+  bg_blur_kernel: 51
+  bg_lowres_scale: 16
+  mode: scope_jpeg
+  codec_family: block_dct
+  name: scope_jpeg_q50
+  jpeg_quality: 50
+  condition:
+    severity: 0.5

@@ -1,0 +1,459 @@
+Colab Session: scope-jpeg-paper
+====================
+
+[2026-11-19 13:07:15] SESSION_CREATED: {'timestamp': '2026-11-19T13:07:15.808743+00:00', 'event_type': 'session_created', 'endpoint': 'gpu-a100-s-ass1c0-29zwmyl6i0kf7', 'variant': 'GPU', 'accelerator': 'A100', 'machine_shape': 'STANDARD'}
+[2026-11-19 13:07:53] EXECUTION: #!/usr/bin/env python3
+"""Run unmodified upstream miccunifi/SCOPE JPEG verification on full COCO 2017 val (5,000 images)."""
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import zipfile
+from pathlib import Path
+
+os.environ["PYTHONUNBUFFERED"] = "1"
+
+SCOPE_WEIGHTS_ID = "1M7lHWbNjrckMNBC623Cn5PvBDuDUBlda"
+EXPECTED_SHA256 = "01bbb0c35f6846293be046a154b31e3037aa2bdbc4dab98362fcf6d9184d81e2"
+
+
+def run(cmd: list[str], cwd: Path | None = None) -> None:
+    print("+ " + " ".join(cmd), flush=True)
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def main() -> None:
+    t0 = time.perf_counter()
+    run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"])
+    usage = shutil.disk_usage("/content")
+    free_gb = usage.free / (1024.0**3)
+    print(f"[Disk] /content total={usage.total / (1024**3):.1f} GB | free={free_gb:.1f} GB", flush=True)
+    if free_gb < 35.0:
+        raise RuntimeError(f"INSUFFICIENT_DISK: /content has only {free_gb:.1f} GB free (< 35 GB needed)")
+
+    run([
+        sys.executable, "-m", "pip", "install", "-q", "-U",
+        "pyyaml", "ultralytics", "pycocotools", "gdown", "scipy", "tqdm", "pillow", "opencv-python-headless",
+    ])
+
+    import ultralytics
+    import yaml
+
+    print(f"[Env] ultralytics={ultralytics.__version__}", flush=True)
+
+    scope_dir = Path("/content/SCOPE")
+    if scope_dir.exists():
+        shutil.rmtree(scope_dir)
+    run(["git", "clone", "https://github.com/miccunifi/SCOPE.git", str(scope_dir)])
+    rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(scope_dir), text=True).strip()
+    print(f"[Upstream SCOPE] Cloned HEAD={rev}", flush=True)
+
+    ckpt_path = (
+        scope_dir
+        / "runs"
+        / "preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557"
+        / "best_val.pt"
+    )
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    run([sys.executable, "-m", "gdown", "--fuzzy", f"https://drive.google.com/uc?id={SCOPE_WEIGHTS_ID}", "-O", str(ckpt_path)])
+    actual_sha = sha256_file(ckpt_path)
+    print(f"[Checkpoint] {ckpt_path.name} sha256={actual_sha}", flush=True)
+    if actual_sha != EXPECTED_SHA256:
+        raise RuntimeError(f"Checkpoint SHA mismatch: {actual_sha} != {EXPECTED_SHA256}")
+
+    coco_dir = Path("/content/coco2017")
+    coco_dir.mkdir(parents=True, exist_ok=True)
+    val_dir = coco_dir / "val2017"
+    ann_file = coco_dir / "annotations" / "instances_val2017.json"
+
+    if not (val_dir.is_dir() and len(list(val_dir.glob("*.jpg"))) >= 5000):
+        z_img = coco_dir / "val2017.zip"
+        run(["curl", "-L", "--retry", "3", "-sS", "-o", str(z_img), "http://images.cocodataset.org/zips/val2017.zip"])
+        with zipfile.ZipFile(z_img, "r") as zf:
+            zf.extractall(coco_dir)
+        z_img.unlink(missing_ok=True)
+
+    if not ann_file.is_file():
+        z_ann = coco_dir / "annotations_trainval2017.zip"
+        run([
+            "curl", "-L", "--retry", "3", "-sS", "-o", str(z_ann),
+            "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
+        ])
+        with zipfile.ZipFile(z_ann, "r") as zf:
+            zf.extractall(coco_dir)
+        z_ann.unlink(missing_ok=True)
+
+    print(f"[COCO] val2017 images={len(list(val_dir.glob('*.jpg')))}, ann={ann_file.exists()}", flush=True)
+
+    ds_val_dir = scope_dir / "datasets" / "coco-2017" / "validation"
+    ds_val_dir.mkdir(parents=True, exist_ok=True)
+    data_link = ds_val_dir / "data"
+    labels_link = ds_val_dir / "labels.json"
+    if data_link.exists() or data_link.is_symlink():
+        data_link.unlink()
+    if labels_link.exists() or labels_link.is_symlink():
+        labels_link.unlink()
+    data_link.symlink_to(val_dir)
+    labels_link.symlink_to(ann_file)
+
+    models_dir = scope_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    prev_cwd = Path.cwd()
+    try:
+        os.chdir(models_dir)
+        from ultralytics import RTDETR, YOLO
+
+        YOLO("yolo26x.pt")
+        RTDETR("rtdetr-l.pt")
+    except Exception as exc:
+        raise RuntimeError(f"MISSING_YOLO26X_OR_RTDETR: {exc}") from exc
+    finally:
+        os.chdir(prev_cwd)
+
+    if not (models_dir / "yolo26x.pt").is_file() or not (models_dir / "rtdetr-l.pt").is_file():
+        raise RuntimeError(f"MISSING_YOLO26X: model weights missing in {models_dir}")
+    print("[Detectors] Ready: models/yolo26x.pt and models/rtdetr-l.pt", flush=True)
+
+    cfg = yaml.safe_load((scope_dir / "configs" / "eval.yaml").read_text(encoding="utf-8"))
+    jpeg_exps = [e for e in cfg["experiments"] if str(e.get("name", "")).startswith(("jpeg_", "scope_jpeg_"))]
+    if len(jpeg_exps) != 12:
+        raise RuntimeError(f"Expected 12 JPEG experiments, got {len(jpeg_exps)}")
+    cfg["experiments"] = jpeg_exps
+    eval_jpeg_yaml = scope_dir / "configs" / "eval_jpeg_only.yaml"
+    eval_jpeg_yaml.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    print(f"[Config] Wrote {eval_jpeg_yaml} with {len(jpeg_exps)} JPEG experiments", flush=True)
+
+    # 1. Upstream YOLO26x + JPEG generation
+    run([sys.executable, "-u", "evaluation/evaluate_yolo26x_codecs.py", "--config", "configs/eval_jpeg_only.yaml"], cwd=scope_dir)
+
+    # 2. Upstream RT-DETR-l on saved reconstructions
+    run([
+        sys.executable, "-u", "evaluation/evaluate_rtdetr_l_saved.py",
+        "--source-eval-dir", "outputs_scope_full_main",
+        "--images-dir", "datasets/coco-2017/validation/data",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--detector-weights", "models/rtdetr-l.pt",
+        "--category-map", "coco91",
+        "--output-dir", "outputs_scope_full_rtdetr_l",
+    ], cwd=scope_dir)
+
+    # 3. Upstream Faster R-CNN R50-FPN v2 on saved reconstructions
+    run([
+        sys.executable, "-u", "-m", "scope.evaluation.saved_multi_detector",
+        "--source-eval-dir", "outputs_scope_full_main",
+        "--images-dir", "datasets/coco-2017/validation/data",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--backend", "torchvision",
+        "--detector", "fasterrcnn_resnet50_fpn_v2",
+        "--label-space", "coco91",
+        "--output-dir", "outputs_scope_full_fasterrcnn_v2",
+    ], cwd=scope_dir)
+
+    # 4. Upstream BDBR calculation (AP@[.50:.95] default + AP@50)
+    run([
+        sys.executable, "-u", "analysis/compute_bdbr.py",
+        "--detector-dir",
+        "full:yolo=outputs_scope_full_main",
+        "full:rtdetr=outputs_scope_full_rtdetr_l",
+        "full:fastrcnn=outputs_scope_full_fasterrcnn_v2",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--table-methods", "full",
+        "--out-dir", "outputs_scope_bdbr",
+    ], cwd=scope_dir)
+
+    run([
+        sys.executable, "-u", "analysis/compute_bdbr.py",
+        "--detector-dir",
+        "full:yolo=outputs_scope_full_main",
+        "full:rtdetr=outputs_scope_full_rtdetr_l",
+        "full:fastrcnn=outputs_scope_full_fasterrcnn_v2",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--metric", "AP50",
+        "--table-methods", "full",
+        "--out-dir", "outputs_scope_bdbr_ap50",
+    ], cwd=scope_dir)
+
+    # Archive compact results (CSV, JSON summaries, BDBR outputs, omitting huge PNGs & raw predictions)
+    out_tar = Path("/content/upstream_scope_jpeg_results.tar.gz")
+    with tarfile.open(out_tar, "w:gz") as tf:
+        for dname in ("outputs_scope_bdbr", "outputs_scope_bdbr_ap50"):
+            dpath = scope_dir / dname
+            if dpath.exists():
+                tf.add(str(dpath), arcname=dname)
+        for out_root in ("outputs_scope_full_main", "outputs_scope_full_rtdetr_l", "outputs_scope_full_fasterrcnn_v2"):
+            rpath = scope_dir / out_root
+            if not rpath.exists():
+                continue
+            for p in sorted(rpath.rglob("*")):
+                if p.is_file() and p.name in ("all_results.csv", "summary.json"):
+                    tf.add(str(p), arcname=p.relative_to(scope_dir).as_posix())
+
+    print(f"[DONE] Archived {out_tar} ({out_tar.stat().st_size / 1024:.1f} KB) in {time.perf_counter() - t0:.1f}s", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+[2026-11-19 14:15:23] FILE_OPERATION: {'timestamp': '2026-11-19T14:15:23.887340+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE'}
+[2026-11-19 14:15:24] FILE_OPERATION: {'timestamp': '2026-11-19T14:15:24.895163+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_main'}
+[2026-11-19 14:36:15] FILE_OPERATION: {'timestamp': '2026-11-19T14:36:15.332207+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE'}
+[2026-11-19 14:36:24] FILE_OPERATION: {'timestamp': '2026-11-19T14:36:24.312107+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_main'}
+[2026-11-19 14:36:25] FILE_OPERATION: {'timestamp': '2026-11-19T14:36:25.274316+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_rtdetr_l'}
+[2026-11-19 14:36:34] FILE_OPERATION: {'timestamp': '2026-11-19T14:36:34.691960+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/all_results.csv', 'local': 'c:\\Users\\Wagur1\\Desktop\\Files\\Paper\\tscope-v3\\outputs_kaggle_pool\\pulled_scope_jpeg_verify\\upstream_live\\yolo26x_all_results.csv'}
+[2026-11-19 14:42:03] FILE_OPERATION: {'timestamp': '2026-11-19T14:42:03.851446+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_rtdetr_l'}
+[2026-11-19 14:43:10] FILE_OPERATION: {'timestamp': '2026-11-19T14:43:10.326218+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/configs/eval_jpeg_only.yaml', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\eval_jpeg_only.yaml'}
+[2026-11-19 14:43:11] FILE_OPERATION: {'timestamp': '2026-11-19T14:43:11.392939+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q30/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\scope_jpeg_q30_bandwidth.csv'}
+[2026-11-19 15:03:34] FILE_OPERATION: {'timestamp': '2026-11-19T15:03:34.078359+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_rtdetr_l'}
+[2026-11-19 15:21:12] FILE_OPERATION: {'timestamp': '2026-11-19T15:21:12.684191+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_rtdetr_l'}
+[2026-11-19 15:36:02] FILE_OPERATION: {'timestamp': '2026-11-19T15:36:02.421932+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_rtdetr_l'}
+[2026-11-19 15:36:03] FILE_OPERATION: {'timestamp': '2026-11-19T15:36:03.334190+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_fasterrcnn_v2'}
+[2026-11-19 15:36:04] FILE_OPERATION: {'timestamp': '2026-11-19T15:36:04.219281+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_rtdetr_l/all_results.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\rtdetr_l_all_results.csv'}
+[2026-11-19 15:55:58] FILE_OPERATION: {'timestamp': '2026-11-19T15:55:58.965265+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_fasterrcnn_v2'}
+[2026-11-19 16:04:29] FILE_OPERATION: {'timestamp': '2026-11-19T16:04:29.208242+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_fasterrcnn_v2'}
+[2026-11-19 16:16:29] FILE_OPERATION: {'timestamp': '2026-11-19T16:16:29.125528+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_fasterrcnn_v2'}
+[2026-11-19 16:28:57] FILE_OPERATION: {'timestamp': '2026-11-19T16:28:57.893445+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_fasterrcnn_v2'}
+[2026-11-19 16:31:44] FILE_OPERATION: {'timestamp': '2026-11-19T16:31:44.634586+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE'}
+[2026-11-19 16:31:45] FILE_OPERATION: {'timestamp': '2026-11-19T16:31:45.729671+00:00', 'event_type': 'file_operation', 'op': 'ls', 'path': 'content/SCOPE/outputs_scope_full_fasterrcnn_v2'}
+[2026-11-19 16:35:44] EXECUTION: #!/usr/bin/env python3
+"""Run unmodified upstream miccunifi/SCOPE JPEG verification on full COCO 2017 val (5,000 images)."""
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import zipfile
+from pathlib import Path
+
+os.environ["PYTHONUNBUFFERED"] = "1"
+
+SCOPE_WEIGHTS_ID = "1M7lHWbNjrckMNBC623Cn5PvBDuDUBlda"
+EXPECTED_SHA256 = "01bbb0c35f6846293be046a154b31e3037aa2bdbc4dab98362fcf6d9184d81e2"
+
+
+def run(cmd: list[str], cwd: Path | None = None) -> None:
+    print("+ " + " ".join(cmd), flush=True)
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def main() -> None:
+    t0 = time.perf_counter()
+    run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"])
+    usage = shutil.disk_usage("/content")
+    free_gb = usage.free / (1024.0**3)
+    print(f"[Disk] /content total={usage.total / (1024**3):.1f} GB | free={free_gb:.1f} GB", flush=True)
+    if free_gb < 35.0:
+        raise RuntimeError(f"INSUFFICIENT_DISK: /content has only {free_gb:.1f} GB free (< 35 GB needed)")
+
+    scope_dir = Path("/content/SCOPE")
+    if not (scope_dir / "scope" / "inference.py").is_file():
+        run([
+            sys.executable, "-m", "pip", "install", "-q", "-U",
+            "pyyaml", "ultralytics", "pycocotools", "gdown", "scipy", "tqdm", "pillow", "opencv-python-headless",
+        ])
+        if scope_dir.exists():
+            shutil.rmtree(scope_dir)
+        run(["git", "clone", "https://github.com/miccunifi/SCOPE.git", str(scope_dir)])
+    else:
+        print("[Reuse] Reusing existing /content/SCOPE checkout and installed packages.", flush=True)
+
+    import ultralytics
+    import yaml
+
+    print(f"[Env] ultralytics={ultralytics.__version__}", flush=True)
+    rev = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(scope_dir), text=True).strip()
+    print(f"[Upstream SCOPE] HEAD={rev}", flush=True)
+
+    ckpt_path = (
+        scope_dir
+        / "runs"
+        / "preedit_d2fpn_nojp2_unbiased_linearsev_mediumbpg_sevbasis_scratch_FULL_20260701_140557"
+        / "best_val.pt"
+    )
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    if not (ckpt_path.is_file() and sha256_file(ckpt_path) == EXPECTED_SHA256):
+        run([
+            "curl", "-L", "--retry", "3", "-sS",
+            f"https://drive.usercontent.google.com/download?id={SCOPE_WEIGHTS_ID}&export=download&confirm=t",
+            "-o", str(ckpt_path),
+        ])
+    actual_sha = sha256_file(ckpt_path)
+    print(f"[Checkpoint] {ckpt_path.name} sha256={actual_sha}", flush=True)
+    if actual_sha != EXPECTED_SHA256:
+        raise RuntimeError(f"Checkpoint SHA mismatch: {actual_sha} != {EXPECTED_SHA256}")
+
+    coco_dir = Path("/content/coco2017")
+    coco_dir.mkdir(parents=True, exist_ok=True)
+    val_dir = coco_dir / "val2017"
+    ann_file = coco_dir / "annotations" / "instances_val2017.json"
+
+    if not (val_dir.is_dir() and len(list(val_dir.glob("*.jpg"))) >= 5000):
+        z_img = coco_dir / "val2017.zip"
+        run(["curl", "-L", "--retry", "3", "-sS", "-o", str(z_img), "http://images.cocodataset.org/zips/val2017.zip"])
+        with zipfile.ZipFile(z_img, "r") as zf:
+            zf.extractall(coco_dir)
+        z_img.unlink(missing_ok=True)
+
+    if not ann_file.is_file():
+        z_ann = coco_dir / "annotations_trainval2017.zip"
+        run([
+            "curl", "-L", "--retry", "3", "-sS", "-o", str(z_ann),
+            "http://images.cocodataset.org/annotations/annotations_trainval2017.zip",
+        ])
+        with zipfile.ZipFile(z_ann, "r") as zf:
+            zf.extractall(coco_dir)
+        z_ann.unlink(missing_ok=True)
+
+    print(f"[COCO] val2017 images={len(list(val_dir.glob('*.jpg')))}, ann={ann_file.exists()}", flush=True)
+
+    ds_val_dir = scope_dir / "datasets" / "coco-2017" / "validation"
+    ds_val_dir.mkdir(parents=True, exist_ok=True)
+    data_link = ds_val_dir / "data"
+    labels_link = ds_val_dir / "labels.json"
+    if data_link.exists() or data_link.is_symlink():
+        data_link.unlink()
+    if labels_link.exists() or labels_link.is_symlink():
+        labels_link.unlink()
+    data_link.symlink_to(val_dir)
+    labels_link.symlink_to(ann_file)
+
+    models_dir = scope_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    prev_cwd = Path.cwd()
+    try:
+        os.chdir(models_dir)
+        from ultralytics import RTDETR, YOLO
+
+        YOLO("yolo26x.pt")
+        RTDETR("rtdetr-l.pt")
+    except Exception as exc:
+        raise RuntimeError(f"MISSING_YOLO26X_OR_RTDETR: {exc}") from exc
+    finally:
+        os.chdir(prev_cwd)
+
+    if not (models_dir / "yolo26x.pt").is_file() or not (models_dir / "rtdetr-l.pt").is_file():
+        raise RuntimeError(f"MISSING_YOLO26X: model weights missing in {models_dir}")
+    print("[Detectors] Ready: models/yolo26x.pt and models/rtdetr-l.pt", flush=True)
+
+    cfg = yaml.safe_load((scope_dir / "configs" / "eval.yaml").read_text(encoding="utf-8"))
+    jpeg_exps = [e for e in cfg["experiments"] if str(e.get("name", "")).startswith(("jpeg_", "scope_jpeg_"))]
+    if len(jpeg_exps) != 12:
+        raise RuntimeError(f"Expected 12 JPEG experiments, got {len(jpeg_exps)}")
+    cfg["experiments"] = jpeg_exps
+    eval_jpeg_yaml = scope_dir / "configs" / "eval_jpeg_only.yaml"
+    eval_jpeg_yaml.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    print(f"[Config] Wrote {eval_jpeg_yaml} with {len(jpeg_exps)} JPEG experiments", flush=True)
+
+    # 1. Upstream YOLO26x + JPEG generation
+    run([sys.executable, "-u", "evaluation/evaluate_yolo26x_codecs.py", "--config", "configs/eval_jpeg_only.yaml"], cwd=scope_dir)
+
+    # 2. Upstream RT-DETR-l on saved reconstructions
+    run([
+        sys.executable, "-u", "evaluation/evaluate_rtdetr_l_saved.py",
+        "--source-eval-dir", "outputs_scope_full_main",
+        "--images-dir", "datasets/coco-2017/validation/data",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--detector-weights", "models/rtdetr-l.pt",
+        "--category-map", "coco91",
+        "--output-dir", "outputs_scope_full_rtdetr_l",
+    ], cwd=scope_dir)
+
+    # 3. Upstream Faster R-CNN R50-FPN v2 on saved reconstructions
+    run([
+        sys.executable, "-u", "-m", "scope.evaluation.saved_multi_detector",
+        "--source-eval-dir", "outputs_scope_full_main",
+        "--images-dir", "datasets/coco-2017/validation/data",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--backend", "torchvision",
+        "--detector", "fasterrcnn_resnet50_fpn_v2",
+        "--label-space", "coco91",
+        "--output-dir", "outputs_scope_full_fasterrcnn_v2",
+    ], cwd=scope_dir)
+
+    # 4. Upstream BDBR calculation (AP@[.50:.95] default + AP@50)
+    run([
+        sys.executable, "-u", "analysis/compute_bdbr.py",
+        "--detector-dir",
+        "full:yolo=outputs_scope_full_main",
+        "full:rtdetr=outputs_scope_full_rtdetr_l",
+        "full:fastrcnn=outputs_scope_full_fasterrcnn_v2",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--table-methods", "full",
+        "--out-dir", "outputs_scope_bdbr",
+    ], cwd=scope_dir)
+
+    run([
+        sys.executable, "-u", "analysis/compute_bdbr.py",
+        "--detector-dir",
+        "full:yolo=outputs_scope_full_main",
+        "full:rtdetr=outputs_scope_full_rtdetr_l",
+        "full:fastrcnn=outputs_scope_full_fasterrcnn_v2",
+        "--annotations-json", "datasets/coco-2017/validation/labels.json",
+        "--metric", "AP50",
+        "--table-methods", "full",
+        "--out-dir", "outputs_scope_bdbr_ap50",
+    ], cwd=scope_dir)
+
+    for bdbr_csv in (
+        scope_dir / "outputs_scope_bdbr" / "bdbr_summary.csv",
+        scope_dir / "outputs_scope_bdbr_ap50" / "bdbr_summary.csv",
+    ):
+        if bdbr_csv.is_file():
+            print(f"\n=== {bdbr_csv.relative_to(scope_dir)} ===\n" + bdbr_csv.read_text(encoding="utf-8"), flush=True)
+
+    # Archive compact results (CSV, JSON summaries, BDBR outputs, omitting huge PNGs & raw predictions)
+    out_tar = Path("/content/upstream_scope_jpeg_results.tar.gz")
+    with tarfile.open(out_tar, "w:gz") as tf:
+        for dname in ("outputs_scope_bdbr", "outputs_scope_bdbr_ap50"):
+            dpath = scope_dir / dname
+            if dpath.exists():
+                tf.add(str(dpath), arcname=dname)
+        for out_root in ("outputs_scope_full_main", "outputs_scope_full_rtdetr_l", "outputs_scope_full_fasterrcnn_v2"):
+            rpath = scope_dir / out_root
+            if not rpath.exists():
+                continue
+            for p in sorted(rpath.rglob("*")):
+                if p.is_file() and p.name in ("all_results.csv", "summary.json"):
+                    tf.add(str(p), arcname=p.relative_to(scope_dir).as_posix())
+
+    print(f"[DONE] Archived {out_tar} ({out_tar.stat().st_size / 1024:.1f} KB) in {time.perf_counter() - t0:.1f}s", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+[2026-11-19 16:36:01] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:01.969084+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/upstream_scope_jpeg_results.tar.gz', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\upstream_scope_jpeg_results.tar.gz'}
+[2026-11-19 16:36:05] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:05.615437+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/jpeg_q10/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\jpeg_q10_bandwidth.csv'}
+[2026-11-19 16:36:06] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:06.866529+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q10/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\scope_jpeg_q10_bandwidth.csv'}
+[2026-11-19 16:36:08] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:08.161942+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/jpeg_q15/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\jpeg_q15_bandwidth.csv'}
+[2026-11-19 16:36:09] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:09.379644+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q15/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\scope_jpeg_q15_bandwidth.csv'}
+[2026-11-19 16:36:10] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:10.642039+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/jpeg_q20/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\jpeg_q20_bandwidth.csv'}
+[2026-11-19 16:36:11] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:11.948671+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q20/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\scope_jpeg_q20_bandwidth.csv'}
+[2026-11-19 16:36:13] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:13.147152+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/jpeg_q30/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\jpeg_q30_bandwidth.csv'}
+[2026-11-19 16:36:14] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:14.410056+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q30/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\scope_jpeg_q30_bandwidth.csv'}
+[2026-11-19 16:36:15] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:15.652823+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/jpeg_q40/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\jpeg_q40_bandwidth.csv'}
+[2026-11-19 16:36:16] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:16.978232+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q40/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\scope_jpeg_q40_bandwidth.csv'}
+[2026-11-19 16:36:18] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:18.253101+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/jpeg_q50/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\jpeg_q50_bandwidth.csv'}
+[2026-11-19 16:36:19] FILE_OPERATION: {'timestamp': '2026-11-19T16:36:19.515802+00:00', 'event_type': 'file_operation', 'op': 'download', 'remote': 'content/SCOPE/outputs_scope_full_main/scope_jpeg_q50/bandwidth.csv', 'local': 'C:\\Users\\Wagur1\\Desktop\\TSCOPE_Slide_Assets\\06_scope_jpeg_verification\\per_image_bandwidth\\scope_jpeg_q50_bandwidth.csv'}
